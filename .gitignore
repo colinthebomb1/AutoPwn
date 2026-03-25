@@ -17,6 +17,8 @@ logs/
 *.elf
 tests/challenges/ret2win_x64
 tests/challenges/ret2libc_x64
+tests/challenges/ret2libc_real_x64
+tests/challenges/ret2libc_pie_real_x64
 tests/challenges/shellcode_x64
 tests/challenges/format_read_x64
 tests/challenges/format_write_x64
