@@ -170,6 +170,7 @@ You MUST keep iterating until:
 ## Exploit Script Guidelines
 
 Write self-contained pwntools scripts. Always:
+- The solver mirrors every `run_exploit` script to `exploits/last_attempt_<binary>.py` (overwritten on each attempt), even when the exploit fails — users can open that file to debug.
 - Use `context.log_level = 'info'` so pwntools output is captured.
 - Print the flag or key output explicitly with `print()`.
 - Handle the case where the process crashes (catch and print the crash info).

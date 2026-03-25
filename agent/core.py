@@ -21,6 +21,46 @@ from agent.prompts import get_system_prompt
 
 console = Console()
 
+
+def _exploits_dir() -> str:
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "exploits"))
+
+
+def _binary_stem(binary_path: str) -> str:
+    return os.path.splitext(os.path.basename(binary_path))[0]
+
+
+def _save_last_attempt_exploit(binary_path: str, script: str) -> str:
+    """Mirror the latest run_exploit script (success or failure) for the user to inspect."""
+    os.makedirs(_exploits_dir(), exist_ok=True)
+    path = os.path.join(_exploits_dir(), f"last_attempt_{_binary_stem(binary_path)}.py")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(script)
+    return path
+
+
+def _save_solve_exploit(binary_path: str, script: str) -> str:
+    """Same filename as CLI uses on successful completion — checkpoint when shell is detected."""
+    os.makedirs(_exploits_dir(), exist_ok=True)
+    path = os.path.join(_exploits_dir(), f"solve_{_binary_stem(binary_path)}.py")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(script)
+    return path
+
+
+def _run_exploit_looks_like_shell(result: Any) -> bool:
+    if not isinstance(result, dict):
+        return False
+    if result.get("timed_out"):
+        return False
+    if result.get("exit_code") != 0:
+        return False
+    if not result.get("script_ran_ok"):
+        return False
+    out = result.get("stdout") or ""
+    return "uid=" in out or "GOT SHELL" in out
+
+
 # ---------------------------------------------------------------------------
 # Tool modules — loaded lazily from MCP server directories
 # ---------------------------------------------------------------------------
@@ -619,6 +659,19 @@ class PwnAgent:
                     all_tool_calls.append(call_record)
 
                     self._display_tool_result(tool_name, result, elapsed)
+
+                    if tool_name == "run_exploit":
+                        script = tool_input.get("script")
+                        if isinstance(script, str) and script.strip():
+                            lp = _save_last_attempt_exploit(binary_path, script)
+                            console.print(
+                                f"[dim]Latest exploit mirrored to {lp}[/dim]"
+                            )
+                            if isinstance(result, dict) and _run_exploit_looks_like_shell(result):
+                                sp = _save_solve_exploit(binary_path, script)
+                                console.print(
+                                    f"[dim]Shell detected — checkpoint saved to {sp}[/dim]"
+                                )
 
                     # Inject planner strategy after first checksec call
                     result_str = json.dumps(result, indent=2, default=str)

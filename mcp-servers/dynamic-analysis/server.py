@@ -104,7 +104,9 @@ def gdb_find_offset(binary_path: str, pattern_length: int = 300) -> dict:
     if sig_match:
         signal_info = sig_match.group(1)
     else:
-        # Fallbacks for different GDB/pwndbg output shapes.
+        # Flake: some GDB/pwndbg versions omit "Program received signal SIGSEGV" in the
+        # captured run output, leaving signal as "unknown" even when offset math succeeds.
+        # Fallbacks for different output shapes (and info program) keep CI stable.
         sig_match = re.search(r"\b(SIG[A-Z]+)\b", output)
         if sig_match:
             signal_info = sig_match.group(1)
