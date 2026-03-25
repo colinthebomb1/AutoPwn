@@ -21,27 +21,64 @@ from agent.prompts import SYSTEM_PROMPT
 console = Console()
 
 # ---------------------------------------------------------------------------
-# MCP client adapter — calls the exploit-tools MCP server in-process
+# Tool modules — loaded lazily from MCP server directories
 # ---------------------------------------------------------------------------
 
-# We load the MCP server's tools directly to avoid needing a separate process
-# during development. In production, these would be MCP client calls over stdio.
-
-_tools_module = None
+_exploit_mod = None
+_dynamic_mod = None
 
 
-def _get_tools_module():
-    global _tools_module
-    if _tools_module is None:
+def _load_server_module(name: str, server_dir: str):
+    """Load a server.py module from a specific directory without import cache collisions."""
+    import importlib.util
+
+    server_dir = os.path.abspath(server_dir)
+    server_path = os.path.join(server_dir, "server.py")
+    sys.path.insert(0, server_dir)
+    spec = importlib.util.spec_from_file_location(name, server_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _get_exploit_module():
+    global _exploit_mod
+    if _exploit_mod is None:
         server_dir = os.path.join(os.path.dirname(__file__), "..", "mcp-servers", "exploit-tools")
-        sys.path.insert(0, os.path.abspath(server_dir))
-        import server as tools_mod
+        _exploit_mod = _load_server_module("exploit_server", server_dir)
+    return _exploit_mod
 
-        _tools_module = tools_mod
-    return _tools_module
+
+def _get_dynamic_module():
+    global _dynamic_mod
+    if _dynamic_mod is None:
+        server_dir = os.path.join(os.path.dirname(__file__), "..", "mcp-servers", "dynamic-analysis")
+        _dynamic_mod = _load_server_module("dynamic_server", server_dir)
+    return _dynamic_mod
+
+
+# Maps tool name → which module provides it
+TOOL_MODULE_MAP: dict[str, str] = {
+    "checksec": "exploit",
+    "elf_symbols": "exploit",
+    "elf_search": "exploit",
+    "rop_gadgets": "exploit",
+    "cyclic_pattern": "exploit",
+    "strings_search": "exploit",
+    "shellcraft_generate": "exploit",
+    "format_string_payload": "exploit",
+    "run_exploit": "exploit",
+    "gdb_find_offset": "dynamic",
+    "gdb_run": "dynamic",
+    "gdb_breakpoint": "dynamic",
+    "gdb_examine": "dynamic",
+    "gdb_vmmap": "dynamic",
+    "gdb_stack": "dynamic",
+}
 
 
 TOOL_REGISTRY: dict[str, dict[str, Any]] = {
+    # --- Exploit tools ---
     "checksec": {
         "description": "Run checksec on a binary to identify security mitigations (RELRO, Canary, NX, PIE). Call this FIRST.",
         "input_schema": {
@@ -67,15 +104,34 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
             "required": ["binary_path"],
         },
     },
+    "elf_search": {
+        "description": "Search for a byte pattern in an ELF binary and return virtual addresses. Essential for finding '/bin/sh' addresses for ROP chains.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "binary_path": {"type": "string", "description": "Path to the ELF binary"},
+                "search_string": {
+                    "type": "string",
+                    "description": "The string or hex bytes to search for. e.g. '/bin/sh' or '5fc3'",
+                },
+                "search_type": {
+                    "type": "string",
+                    "enum": ["string", "hex"],
+                    "description": "'string' for ASCII, 'hex' for raw bytes. Default 'string'.",
+                },
+            },
+            "required": ["binary_path", "search_string"],
+        },
+    },
     "rop_gadgets": {
-        "description": "Search for ROP gadgets in a binary using ropper.",
+        "description": "Search for ROP gadgets in a binary. Uses pwntools ROP engine plus raw byte-pattern search for common gadgets.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "binary_path": {"type": "string", "description": "Path to the ELF binary"},
                 "search": {
                     "type": "string",
-                    "description": "Filter string (e.g. 'pop rdi', 'ret'). If omitted, returns common gadgets.",
+                    "description": "Filter string (e.g. 'pop rdi', 'ret'). If omitted, returns all gadgets.",
                 },
                 "max_results": {"type": "integer", "description": "Max gadgets to return. Default 50."},
             },
@@ -109,6 +165,43 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
             "required": ["binary_path"],
         },
     },
+    "shellcraft_generate": {
+        "description": "Generate shellcode using pwntools shellcraft. Returns hex-encoded shellcode, assembly listing, and length.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "payload_type": {
+                    "type": "string",
+                    "enum": ["sh", "cat_flag", "execve", "nop_sled"],
+                    "description": "Type of shellcode: 'sh' for /bin/sh shell, 'cat_flag' to read flag.txt, 'execve' same as sh, 'nop_sled' for NOP padding.",
+                },
+                "arch": {
+                    "type": "string",
+                    "enum": ["amd64", "i386"],
+                    "description": "Target architecture. Default 'amd64'.",
+                },
+            },
+            "required": ["payload_type"],
+        },
+    },
+    "format_string_payload": {
+        "description": "Generate a format string write payload using pwntools fmtstr_payload. Writes arbitrary values to arbitrary addresses via %n.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "offset": {
+                    "type": "integer",
+                    "description": "Format string parameter offset (position of your buffer on the stack). Find by sending %p payloads.",
+                },
+                "writes": {
+                    "type": "object",
+                    "description": "Dict of {hex_address: value} to write. Example: {'0x404060': 1}.",
+                },
+                "arch": {"type": "string", "description": "Target architecture. Default 'amd64'."},
+            },
+            "required": ["offset", "writes"],
+        },
+    },
     "run_exploit": {
         "description": "Execute a pwntools exploit script. Write a complete Python script using pwntools, and this tool will run it and return stdout/stderr/exit_code.",
         "input_schema": {
@@ -121,15 +214,105 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
             "required": ["script"],
         },
     },
+    # --- Dynamic analysis (GDB) tools ---
+    "gdb_find_offset": {
+        "description": "Find the exact buffer overflow offset by crashing the binary with a cyclic pattern in GDB and analyzing the crash state. Much more reliable than guessing offsets.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "binary_path": {"type": "string", "description": "Path to the ELF binary"},
+                "pattern_length": {"type": "integer", "description": "Length of cyclic pattern. Default 300."},
+            },
+            "required": ["binary_path"],
+        },
+    },
+    "gdb_run": {
+        "description": "Run a binary in GDB and return the crash/exit state including registers and signal info.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "binary_path": {"type": "string", "description": "Path to the ELF binary"},
+                "stdin_data": {"type": "string", "description": "Data to pipe as stdin."},
+                "args": {"type": "string", "description": "Command line arguments."},
+            },
+            "required": ["binary_path"],
+        },
+    },
+    "gdb_breakpoint": {
+        "description": "Set a breakpoint in GDB, run the binary, and return the register/stack state at the breakpoint.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "binary_path": {"type": "string", "description": "Path to the ELF binary"},
+                "address": {"type": "string", "description": "Breakpoint address (hex like '0x401234' or symbol like 'vuln')."},
+                "stdin_data": {"type": "string", "description": "Optional stdin data."},
+                "commands": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional GDB commands to run at the breakpoint.",
+                },
+            },
+            "required": ["binary_path", "address"],
+        },
+    },
+    "gdb_examine": {
+        "description": "Examine memory at an address in GDB.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "binary_path": {"type": "string", "description": "Path to the ELF binary"},
+                "address": {"type": "string", "description": "Memory address to examine (hex or $register)."},
+                "count": {"type": "integer", "description": "Number of units to display. Default 16."},
+                "format": {"type": "string", "description": "GDB format (e.g. 'gx' for giant hex, 'wx' for word hex, 's' for string). Default 'gx'."},
+                "stdin_data": {"type": "string", "description": "Optional stdin data."},
+                "break_at": {"type": "string", "description": "Optional breakpoint to set before running."},
+            },
+            "required": ["binary_path", "address"],
+        },
+    },
+    "gdb_vmmap": {
+        "description": "Show the memory map of a running process in GDB. Useful for finding stack/heap addresses.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "binary_path": {"type": "string", "description": "Path to the ELF binary"},
+                "stdin_data": {"type": "string", "description": "Optional stdin data."},
+            },
+            "required": ["binary_path"],
+        },
+    },
+    "gdb_stack": {
+        "description": "Dump stack words around RSP. Useful for understanding stack layout.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "binary_path": {"type": "string", "description": "Path to the ELF binary"},
+                "count": {"type": "integer", "description": "Number of 8-byte words to dump. Default 32."},
+                "stdin_data": {"type": "string", "description": "Optional stdin data."},
+                "break_at": {"type": "string", "description": "Optional breakpoint (address or symbol)."},
+            },
+            "required": ["binary_path"],
+        },
+    },
 }
 
 
 def _call_tool(name: str, arguments: dict) -> Any:
-    """Dispatch a tool call to the in-process MCP server functions."""
-    mod = _get_tools_module()
+    """Dispatch a tool call to the appropriate MCP server module."""
+    module_key = TOOL_MODULE_MAP.get(name)
+    if module_key is None:
+        return {"error": f"Unknown tool: {name}"}
+
+    if module_key == "exploit":
+        mod = _get_exploit_module()
+    elif module_key == "dynamic":
+        mod = _get_dynamic_module()
+    else:
+        return {"error": f"Unknown module: {module_key}"}
+
     func = getattr(mod, name, None)
     if func is None:
-        return {"error": f"Unknown tool: {name}"}
+        return {"error": f"Tool {name} not found in {module_key} module"}
     try:
         return func(**arguments)
     except Exception as e:
@@ -168,7 +351,6 @@ class PwnAgent:
 
         console.print(Panel(f"[bold]Target:[/bold] {binary_path}", title="pwn-solver", border_style="blue"))
 
-        # Build tool definitions for Anthropic API
         tools = [
             {"name": name, "description": spec["description"], "input_schema": spec["input_schema"]}
             for name, spec in TOOL_REGISTRY.items()
@@ -184,12 +366,14 @@ class PwnAgent:
                 "role": "user",
                 "content": (
                     f"Analyze and exploit the binary at `{binary_path}`. "
-                    f"Start with checksec, then systematically work through recon and exploitation."
+                    f"Start with checksec, then systematically work through recon and exploitation. "
+                    f"Use gdb_find_offset to determine buffer overflow offsets precisely."
                 ),
             }
         ]
 
         all_tool_calls: list[dict] = []
+        planner_injected = False
 
         for iteration in range(1, self.max_iterations + 1):
             console.print(f"\n[dim]─── Iteration {iteration}/{self.max_iterations} ───[/dim]")
@@ -202,7 +386,6 @@ class PwnAgent:
                 messages=messages,
             )
 
-            # Process response content blocks
             assistant_content = response.content
             tool_use_blocks = []
 
@@ -212,14 +395,12 @@ class PwnAgent:
                 elif block.type == "tool_use":
                     tool_use_blocks.append(block)
 
-            # If no tool calls, agent is done reasoning
             if response.stop_reason == "end_turn" and not tool_use_blocks:
                 summary = ""
                 for block in assistant_content:
                     if block.type == "text":
                         summary += block.text
 
-                # Extract the last exploit script if any
                 last_script = None
                 for tc in reversed(all_tool_calls):
                     if tc["tool"] == "run_exploit":
@@ -234,7 +415,6 @@ class PwnAgent:
                     tool_calls=all_tool_calls,
                 )
 
-            # Execute tool calls
             if tool_use_blocks:
                 messages.append({"role": "assistant", "content": assistant_content})
                 tool_results = []
@@ -243,15 +423,12 @@ class PwnAgent:
                     tool_name = tool_block.name
                     tool_input = tool_block.input
 
-                    # Display tool call
                     self._display_tool_call(tool_name, tool_input)
 
-                    # Execute
                     start = time.time()
                     result = _call_tool(tool_name, tool_input)
                     elapsed = time.time() - start
 
-                    # Record
                     call_record = {
                         "iteration": iteration,
                         "tool": tool_name,
@@ -261,10 +438,28 @@ class PwnAgent:
                     }
                     all_tool_calls.append(call_record)
 
-                    # Display result
                     self._display_tool_result(tool_name, result, elapsed)
 
+                    # Inject planner strategy after first checksec call
                     result_str = json.dumps(result, indent=2, default=str)
+                    if tool_name == "checksec" and not planner_injected and isinstance(result, dict):
+                        strategy = plan_from_checksec(result)
+                        planner_note = (
+                            f"\n\n[Strategy Hint] Based on checksec: **{strategy.name}** — "
+                            f"{strategy.description}\n"
+                            f"Suggested techniques: {', '.join(strategy.technique_hints)}\n"
+                            f"Suggested tools: {', '.join(strategy.suggested_tools)}"
+                        )
+                        result_str += planner_note
+                        planner_injected = True
+                        console.print(
+                            Panel(
+                                f"Strategy: [bold]{strategy.name}[/bold] — {strategy.description}",
+                                title="Planner",
+                                border_style="magenta",
+                            )
+                        )
+
                     if len(result_str) > 8000:
                         result_str = result_str[:8000] + "\n... [truncated]"
 
@@ -276,7 +471,6 @@ class PwnAgent:
 
                 messages.append({"role": "user", "content": tool_results})
 
-            # If stop_reason is end_turn with tool calls already processed, continue loop
             if response.stop_reason == "end_turn" and tool_use_blocks:
                 continue
 

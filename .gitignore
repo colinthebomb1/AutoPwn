@@ -16,6 +16,10 @@ logs/
 *.o
 *.elf
 tests/challenges/ret2win_x64
+tests/challenges/ret2libc_x64
+tests/challenges/shellcode_x64
+tests/challenges/format_read_x64
+tests/challenges/format_write_x64
 
 .pytest_cache/
 .ruff_cache/
@@ -28,3 +32,5 @@ tests/challenges/ret2win_x64
 # IDE
 .vscode/
 .idea/
+
+.gdb_history

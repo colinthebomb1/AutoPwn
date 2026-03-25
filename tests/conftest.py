@@ -4,19 +4,18 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
 
 import pytest
 
 CHALLENGES_DIR = os.path.join(os.path.dirname(__file__), "challenges")
-RET2WIN_BIN = os.path.join(CHALLENGES_DIR, "ret2win_x64")
 
 
-def _compile_if_missing(binary: str) -> str:
+def _compile_if_missing(binary_name: str) -> str:
     """Compile test binaries via Make if they don't exist."""
+    binary = os.path.join(CHALLENGES_DIR, binary_name)
     if not os.path.isfile(binary):
         result = subprocess.run(
-            ["make", os.path.basename(binary)],
+            ["make", binary_name],
             cwd=CHALLENGES_DIR,
             capture_output=True,
             text=True,
@@ -28,5 +27,24 @@ def _compile_if_missing(binary: str) -> str:
 
 @pytest.fixture
 def ret2win_binary() -> str:
-    """Path to the compiled ret2win test binary."""
-    return _compile_if_missing(RET2WIN_BIN)
+    return _compile_if_missing("ret2win_x64")
+
+
+@pytest.fixture
+def ret2libc_binary() -> str:
+    return _compile_if_missing("ret2libc_x64")
+
+
+@pytest.fixture
+def shellcode_binary() -> str:
+    return _compile_if_missing("shellcode_x64")
+
+
+@pytest.fixture
+def format_read_binary() -> str:
+    return _compile_if_missing("format_read_x64")
+
+
+@pytest.fixture
+def format_write_binary() -> str:
+    return _compile_if_missing("format_write_x64")
