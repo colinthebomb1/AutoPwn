@@ -41,6 +41,11 @@ def ret2libc_real_binary() -> str:
 
 
 @pytest.fixture
+def ret2libc_pie_real_binary() -> str:
+    return _compile_if_missing("ret2libc_pie_real_x64")
+
+
+@pytest.fixture
 def shellcode_binary() -> str:
     return _compile_if_missing("shellcode_x64")
 

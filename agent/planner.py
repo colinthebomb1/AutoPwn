@@ -51,6 +51,17 @@ def plan_from_checksec(checksec_result: dict) -> Strategy:
 
     if not canary and pie:
         techniques.append("info_leak_needed")
+
+        # Next-tier binaries usually still want ret2libc on PIE+NX.
+        if nx:
+            techniques.extend(["ret2libc", "pie_base_leak"])
+            return Strategy(
+                name="pie_ret2libc",
+                description="PIE enabled + NX — leak PIE base, then use staged ret2libc (libc leak -> system).",
+                suggested_tools=tools + ["rop_gadgets", "pie_base_from_leak", "libc_symbols", "libc_base_from_leak"],
+                technique_hints=techniques,
+            )
+
         techniques.append("partial_overwrite")
         return Strategy(
             name="pie_bypass",

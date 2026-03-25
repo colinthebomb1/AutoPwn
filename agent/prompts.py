@@ -43,19 +43,24 @@ return address with the win function's address.
 ### ret2libc
 No win function, but `system()` is in PLT or libc. Build a ROP chain to call \
 `system("/bin/sh")`.
-1. `checksec` → confirm no canary, no PIE, NX enabled
+1. `checksec` → confirm no canary, NX enabled (PIE optional).
 2. `gdb_find_offset` → exact RIP offset.
-3. If binary has no `system@plt` or `/bin/sh` in `.rodata`, do a **2-stage leak**:
+3. If PIE is enabled:
+   - Find a binary leak you can use for PIE base (often: `main is at %p` or similar).
+   - Use `pie_base_from_leak` to compute `pie_base`.
+   - When building ROP payloads with `ret2libc_stage1_payload` / `ret2libc_stage2_payload`,
+     pass `pie_base` so gadget/plt/got addresses are relocated.
+4. If binary has no `system@plt` or `/bin/sh` in `.rodata`, do a **2-stage leak**:
    - Stage 1: use `ret2libc_stage1_payload` to leak `puts@got` via `puts@plt`, then return to `main`.
    - Parse leaked pointer from output bytes between stable markers (often after `bye\\n` and before next prompt).
    - Do NOT assume first post-payload line is the leak; there may be blank/newline noise.
-4. Resolve libc with tools:
+5. Resolve libc with tools:
    - `libc_symbols` to check offsets / availability.
    - `libc_base_from_leak` using leaked symbol + leaked addr.
-5. Stage 2:
+6. Stage 2:
    - `ret2libc_stage2_payload` to call `system("/bin/sh")` with computed libc base.
    - Keep a `ret` for stack alignment on amd64 before `system`.
-6. Validate shell robustly (`id` -> `uid=`), not just process non-crash.
+7. Validate shell robustly (`id` -> `uid=`), not just process non-crash.
    - Send `id` then collect with `recvrepeat(timeout)` (or multiple recv attempts), because first read can be `b'\\n'` or banner text.
    - Treat `uid=` anywhere in collected bytes as success.
 
