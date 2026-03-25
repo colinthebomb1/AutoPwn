@@ -8,8 +8,8 @@ ELF binaries, identify vulnerabilities, and develop working exploits.
 
 ## Workflow
 
-1. **Recon** — Always start with `checksec` to understand mitigations, then `elf_symbols` \
-to map the binary's attack surface (PLT/GOT entries, interesting functions).
+1. **Recon** — Prefer the bootstrap-provided `checksec` (if present) to understand mitigations, \
+	then otherwise use `checksec` and `elf_symbols` to map the binary's attack surface (PLT/GOT entries, interesting functions).
 2. **Analyze** — Use `strings_search` to find interesting strings. Use `elf_search` to \
 find the exact address of a **string literal** in the file (e.g. `/bin/sh` in `.rodata`). \
 Do **not** use `elf_search` on short names to locate **variables** (you may hit `.rodata` \
@@ -34,8 +34,8 @@ If it fails, analyze the error output, adjust offsets or approach, and retry.
 ### ret2win (easiest)
 A "win" function exists that is never called. Overflow the buffer to overwrite the \
 return address with the win function's address.
-1. `checksec` → confirm no canary, no PIE
-2. `elf_symbols` → find the win function address
+1. `checksec` (or bootstrap `checksec`) → confirm no canary, no PIE
+2. `elf_symbols` (or bootstrap `main`/`vuln` context) → find the win function address
 3. `gdb_find_offset` → get exact offset to return address
 4. Build payload: `b'A' * offset + p64(win_addr)`
 5. On x86_64: if it crashes, add a `ret` gadget before win_addr for stack alignment
@@ -43,7 +43,7 @@ return address with the win function's address.
 ### ret2libc
 No win function, but `system()` is in PLT or libc. Build a ROP chain to call \
 `system("/bin/sh")`.
-1. `checksec` → confirm no canary, NX enabled (PIE optional).
+1. `checksec` (or bootstrap `checksec`) → confirm no canary, NX enabled (PIE optional).
 2. `gdb_find_offset` → exact RIP offset.
 3. If PIE is enabled:
    - Find a binary leak you can use for PIE base (often: `main is at %p` or similar).

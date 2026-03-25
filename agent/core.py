@@ -452,16 +452,79 @@ class PwnAgent:
             host, port = remote.split(":")
             system += f"\n\nRemote target: {host}:{port}"
 
+        # ------------------------------------------------------------------
+        # Bootstrap analysis (cheap local tools)
+        # ------------------------------------------------------------------
+        # The goal is to avoid the agent spending early iterations re-running
+        # `checksec`, `elf_symbols`, and `strings_search`.
+        def _bootstrap() -> str:
+            def _safe_call(name: str, args: dict) -> Any:
+                try:
+                    return _call_tool(name, args)
+                except Exception as e:
+                    return {"error": f"{type(e).__name__}: {e}"}
+
+            checksec_res = _safe_call("checksec", {"binary_path": binary_path})
+            funcs_res = _safe_call("elf_symbols", {"binary_path": binary_path, "symbol_type": "functions"})
+            plt_res = _safe_call("elf_symbols", {"binary_path": binary_path, "symbol_type": "plt"})
+            got_res = _safe_call("elf_symbols", {"binary_path": binary_path, "symbol_type": "got"})
+            strings_res = _safe_call("strings_search", {"binary_path": binary_path, "min_length": 4})
+
+            plt = plt_res.get("plt", {}) if isinstance(plt_res, dict) else {}
+            got = got_res.get("got", {}) if isinstance(got_res, dict) else {}
+            func_addrs = funcs_res.get("functions", {}) if isinstance(funcs_res, dict) else {}
+
+            main_addr = func_addrs.get("main")
+            vuln_addr = func_addrs.get("vuln")
+
+            def _pick(d: dict, keys: tuple[str, ...]) -> dict:
+                out: dict[str, Any] = {}
+                for k in keys:
+                    if k in d:
+                        out[k] = d[k]
+                return out
+
+            bootstrap = {
+                "checksec": checksec_res,
+                "main": main_addr,
+                "vuln": vuln_addr,
+                "plt": _pick(plt, ("puts", "printf", "read", "system")),
+                "got": _pick(got, ("puts", "printf", "read", "system")),
+                # Unfiltered; may be truncated by the overall bootstrap size cap.
+                "strings": strings_res if isinstance(strings_res, list) else strings_res,
+                "strings_note": "If strings look truncated, rerun strings_search when needed.",
+            }
+            # Keep the injected message short enough to avoid token blowups.
+            import json
+
+            dumped = json.dumps(bootstrap, indent=2, default=str)
+            if len(dumped) > 2500:
+                dumped = dumped[:2500] + "\n... [bootstrap truncated]"
+            return dumped
+
+        bootstrap_msg = _bootstrap()
+
         messages: list[dict] = [
             {
                 "role": "user",
                 "content": (
                     f"Analyze and exploit the binary at `{binary_path}`. "
-                    f"Start with checksec, then systematically work through recon and exploitation. "
+                    f"Start with `checksec` + `elf_symbols` for recon, but if bootstrap provides those values, reuse them. "
                     f"Use gdb_find_offset to determine buffer overflow offsets precisely."
                 ),
             }
         ]
+
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "Bootstrap analysis computed locally to help you start faster. "
+                    "You can use it as context, but feel free to rerun any tools if needed.\n\n"
+                    f"{bootstrap_msg}"
+                ),
+            }
+        )
 
         all_tool_calls: list[dict] = []
         planner_injected = False
