@@ -3,8 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
+  # Run on every PR (any base) so a green "CI / test" check exists before merge.
   pull_request:
-    branches: [main]
 
 jobs:
   test:
