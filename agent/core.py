@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import time
+import random
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -68,6 +69,7 @@ TOOL_MODULE_MAP: dict[str, str] = {
     "shellcraft_generate": "exploit",
     "libc_symbols": "exploit",
     "libc_base_from_leak": "exploit",
+    "pie_base_from_leak": "exploit",
     "ret2libc_stage1_payload": "exploit",
     "ret2libc_stage2_payload": "exploit",
     "format_string_payload": "exploit",
@@ -215,6 +217,18 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
             "required": ["libc_path", "leaked_symbol", "leaked_address"],
         },
     },
+    "pie_base_from_leak": {
+        "description": "Compute PIE base from one leaked symbol address (pie_base = leak - elf.symbols[symbol]).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "binary_path": {"type": "string", "description": "Target PIE ELF path."},
+                "leaked_symbol": {"type": "string", "description": "Symbol name you leaked (e.g. 'main')."},
+                "leaked_address": {"type": "string", "description": "Leaked runtime address as hex/int string."},
+            },
+            "required": ["binary_path", "leaked_symbol", "leaked_address"],
+        },
+    },
     "ret2libc_stage1_payload": {
         "description": "Build stage-1 payload: leak GOT via puts@plt and return to main/vuln for a second stage.",
         "input_schema": {
@@ -224,6 +238,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
                 "offset": {"type": "integer", "description": "Overflow offset to saved RIP."},
                 "leak_symbol": {"type": "string", "description": "Imported symbol to leak. Default puts."},
                 "reentry_symbol": {"type": "string", "description": "Symbol to return to after leak. Default main."},
+                "pie_base": {"type": "string", "description": "Optional PIE base as hex/int string. If omitted, treated as 0."},
             },
             "required": ["binary_path", "offset"],
         },
@@ -238,6 +253,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
                 "offset": {"type": "integer", "description": "Overflow offset to saved RIP."},
                 "leaked_symbol": {"type": "string", "description": "Symbol name used for base calc (e.g. puts)."},
                 "leaked_address": {"type": "string", "description": "Leaked runtime address as hex/int string."},
+                "pie_base": {"type": "string", "description": "Optional PIE base as hex/int string. If omitted, treated as 0."},
             },
             "required": ["binary_path", "libc_path", "offset", "leaked_symbol", "leaked_address"],
         },
@@ -453,13 +469,32 @@ class PwnAgent:
         for iteration in range(1, self.max_iterations + 1):
             console.print(f"\n[dim]─── Iteration {iteration}/{self.max_iterations} ───[/dim]")
 
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=4096,
-                system=system,
-                tools=tools,
-                messages=messages,
-            )
+            # Anthropic sometimes returns 429/529 transient errors. Retry so the
+            # agent doesn't crash mid-run and lose context.
+            last_exc: Exception | None = None
+            for attempt in range(1, 6):
+                try:
+                    response = self.client.messages.create(
+                        model=self.model,
+                        max_tokens=4096,
+                        system=system,
+                        tools=tools,
+                        messages=messages,
+                    )
+                    last_exc = None
+                    break
+                except (anthropic._exceptions.OverloadedError, anthropic._exceptions.RateLimitError) as e:
+                    last_exc = e
+                    if attempt >= 5:
+                        break
+                    # Exponential backoff with small jitter.
+                    sleep_s = min(2 ** attempt, 20) + random.uniform(0, 0.75)
+                    console.print(
+                        f"[dim]Anthropic busy (attempt {attempt}/4). Sleeping {sleep_s:.1f}s...[/dim]"
+                    )
+                    time.sleep(sleep_s)
+            if last_exc is not None:
+                raise last_exc
 
             assistant_content = response.content
             tool_use_blocks = []
