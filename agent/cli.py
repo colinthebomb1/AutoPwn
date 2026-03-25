@@ -49,6 +49,11 @@ def main(binary: str, remote: str | None, model: str, max_iterations: int) -> No
             console.print(Syntax(result.exploit_script, "python", theme="monokai"))
     else:
         console.print("[bold red]✗ Solve failed[/bold red]")
+        binary_name = os.path.splitext(os.path.basename(binary))[0]
+        exploits_dir = os.path.join(os.path.dirname(__file__), "..", "exploits")
+        last_path = os.path.abspath(os.path.join(exploits_dir, f"last_attempt_{binary_name}.py"))
+        if os.path.isfile(last_path):
+            console.print(f"[dim]Latest run_exploit script (if any): {last_path}[/dim]")
 
     console.print(f"\n[dim]Iterations: {result.iterations} | Tool calls: {len(result.tool_calls)}[/dim]")
 

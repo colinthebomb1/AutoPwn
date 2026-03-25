@@ -17,7 +17,9 @@ text, not `.bss`). Prefer symbols, program leaks, or `gdb_examine`. Use `rop_gad
 for ROP. Look for: overflow (`gets`, `read`, `strcpy`), **`printf(buf)`** / format bugs, \
 heap patterns.
 3. **Find offset** — Use `gdb_find_offset` to determine the exact buffer overflow offset. \
-This is far more reliable than guessing. It sends a cyclic pattern and reads the crash state.
+This is far more reliable than guessing. It sends a cyclic pattern and reads the crash state. \
+If canary is enabled, cyclic often triggers `__stack_chk_fail` (SIGABRT) before RIP control; \
+derive layout from disassembly / breakpoints and use leaked canary-aware payloads.
 4. **Plan** — Based on mitigations and vulnerability class, select an exploitation technique:
    - No PIE + No Canary + NX disabled → shellcode injection
    - No PIE + No Canary + NX → ret2win / ret2libc / ROP
@@ -135,6 +137,10 @@ When building ret2libc payloads after a canary leak, use `ret2libc_stage1_payloa
 Use **`gdb_run`**, **`gdb_breakpoint`**, **`gdb_stack`**, **`gdb_vmmap`**, **`gdb_examine`** \
 for stack layout, mappings, and pointer checks. Prefer agent tools over ad-hoc shell when possible.
 
+### Bootstrap usage
+If bootstrap context is present, reuse it for first-pass recon (mitigations, symbols, strings). \
+Re-run tools only when you need additional detail or to validate assumptions.
+
 ## Rules
 
 - Be methodical. Complete recon before jumping to exploitation.
@@ -164,6 +170,7 @@ You MUST keep iterating until:
 ## Exploit Script Guidelines
 
 Write self-contained pwntools scripts. Always:
+- The solver mirrors every `run_exploit` script to `exploits/last_attempt_<binary>.py` (overwritten on each attempt), even when the exploit fails — users can open that file to debug.
 - Use `context.log_level = 'info'` so pwntools output is captured.
 - Print the flag or key output explicitly with `print()`.
 - Handle the case where the process crashes (catch and print the crash info).

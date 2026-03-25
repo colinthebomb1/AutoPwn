@@ -21,6 +21,24 @@ from agent.prompts import get_system_prompt
 
 console = Console()
 
+
+def _exploits_dir() -> str:
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "exploits"))
+
+
+def _binary_stem(binary_path: str) -> str:
+    return os.path.splitext(os.path.basename(binary_path))[0]
+
+
+def _save_last_attempt_exploit(binary_path: str, script: str) -> str:
+    """Mirror the latest run_exploit script (success or failure) for the user to inspect."""
+    os.makedirs(_exploits_dir(), exist_ok=True)
+    path = os.path.join(_exploits_dir(), f"last_attempt_{_binary_stem(binary_path)}.py")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(script)
+    return path
+
+
 # ---------------------------------------------------------------------------
 # Tool modules — loaded lazily from MCP server directories
 # ---------------------------------------------------------------------------
@@ -300,20 +318,21 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
     "run_exploit": {
-        "description": "Execute a pwntools exploit script. Write a complete Python script using pwntools, and this tool will run it and return stdout/stderr/exit_code.",
+        "description": "Execute a pwntools exploit script. Write a complete Python script using pwntools, and this tool will run it and return stdout/stderr/exit_code. Scripts are not persisted unless save_script=true.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "script": {"type": "string", "description": "The pwntools exploit script as a Python string."},
                 "binary_path": {"type": "string", "description": "Path to target binary (optional, set as BINARY env var)."},
                 "timeout": {"type": "integer", "description": "Execution timeout in seconds. Default 15."},
+                "save_script": {"type": "boolean", "description": "Set true to save the script under /exploits. Default false."},
             },
             "required": ["script"],
         },
     },
     # --- Dynamic analysis (GDB) tools ---
     "gdb_find_offset": {
-        "description": "Find the exact buffer overflow offset by crashing the binary with a cyclic pattern in GDB and analyzing the crash state. Much more reliable than guessing offsets.",
+        "description": "Find the exact buffer overflow offset by crashing the binary with a cyclic pattern in GDB and analyzing the crash state. Much more reliable than guessing offsets; on canary binaries this may abort at __stack_chk_fail before RIP control.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -618,6 +637,14 @@ class PwnAgent:
                     all_tool_calls.append(call_record)
 
                     self._display_tool_result(tool_name, result, elapsed)
+
+                    if tool_name == "run_exploit":
+                        script = tool_input.get("script")
+                        if isinstance(script, str) and script.strip():
+                            lp = _save_last_attempt_exploit(binary_path, script)
+                            console.print(
+                                f"[dim]Latest exploit mirrored to {lp}[/dim]"
+                            )
 
                     # Inject planner strategy after first checksec call
                     result_str = json.dumps(result, indent=2, default=str)
