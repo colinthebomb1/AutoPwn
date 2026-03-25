@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import os
-import sys
-
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "mcp-servers", "dynamic-analysis"))
+from tests.mcp_loader import load_dynamic_analysis
 
-import server as gdb_server
+gdb_server = load_dynamic_analysis()
 
 
 class TestGDBFindOffset:

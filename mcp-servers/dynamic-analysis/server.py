@@ -42,12 +42,31 @@ def _resolve_binary(path: str) -> str:
 
 
 def _parse_registers(output: str) -> dict[str, str]:
-    """Extract register values from GDB info registers output."""
+    """Extract register values from GDB / pwndbg `info registers` output."""
+    if not output or output.startswith("[TIMEOUT") or output.startswith("[GDB process"):
+        return {}
     regs = {}
     for line in output.splitlines():
-        match = re.match(r"\s*(\w+)\s+(0x[0-9a-fA-F]+)", line)
+        line_stripped = line.strip()
+        if not line_stripped or line_stripped.startswith("LEGEND") or line_stripped.startswith("─"):
+            continue
+        # "rax            0x401234" / "RAX  0x401234" / "rax: 0x401234"
+        match = re.match(r"^([A-Za-z][A-Za-z0-9]*)\s*:\s*(0x[0-9a-fA-F]+)", line_stripped)
+        if not match:
+            match = re.match(r"^([A-Za-z][A-Za-z0-9]*)\s+(0x[0-9a-fA-F]+)", line_stripped)
         if match:
-            regs[match.group(1)] = match.group(2)
+            regs[match.group(1).lower()] = match.group(2)
+    return regs
+
+
+def _registers_fallback(session) -> dict[str, str]:
+    """When `info registers` layout differs (pwndbg/GDB versions), use print expressions."""
+    regs: dict[str, str] = {}
+    for name in ("rip", "rsp", "rbp", "rax"):
+        out = session.command(f"p/x ${name}")
+        m = re.search(r"(0x[0-9a-fA-F]+)", out)
+        if m:
+            regs[name] = m.group(1)
     return regs
 
 
@@ -189,6 +208,8 @@ def gdb_run(
     if signal_info:
         reg_output = session.command("info registers")
         regs = _parse_registers(reg_output)
+        if not regs:
+            regs = _registers_fallback(session)
 
     # Check exit status
     exit_code = None
@@ -238,6 +259,8 @@ def gdb_breakpoint(
     # Get registers at breakpoint
     reg_output = session.command("info registers")
     regs = _parse_registers(reg_output)
+    if not regs:
+        regs = _registers_fallback(session)
 
     # Dump stack
     stack_output = session.command("x/16gx $rsp")
