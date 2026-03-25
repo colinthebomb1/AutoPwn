@@ -355,7 +355,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
     "gdb_breakpoint": {
-        "description": "Set a breakpoint in GDB, run the binary, and return the register/stack state at the breakpoint.",
+        "description": "Set a breakpoint in GDB, run the binary, return registers, stack_dump, compact disassembly at RIP (disassembly), and a shortened run transcript (output).",
         "input_schema": {
             "type": "object",
             "properties": {

@@ -45,6 +45,8 @@ class TestGDBBreakpoint:
         assert isinstance(result, dict)
         assert "registers" in result
         assert "stack_dump" in result
+        assert "disassembly" in result
+        assert isinstance(result["disassembly"], str)
         assert len(result["registers"]) > 0
 
 

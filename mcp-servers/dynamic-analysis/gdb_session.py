@@ -11,6 +11,37 @@ ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]|\x1b\([a-zA-Z]")
 PROMPT_PATTERN = [r"pwndbg>", r"\(gdb\)"]
 PROMPT_RE = re.compile(r"(?:pwndbg>|\(gdb\))\s*$")
 
+# Box-drawing, blocks, pwndbg arrows, em dash — strip for LLM-friendly MCP payloads.
+_MESSY_UNICODE_RE = re.compile(
+    r"[\u2500-\u257F\u2580-\u259F\u25A0-\u25FF\u2190-\u21FF\u2014\u2011]"
+)
+
+# After GDB attaches, shrink pwndbg context noise. Harmless "undefined command" on plain GDB.
+_GDB_INIT_COMMANDS = (
+    "set pagination off",
+    "set confirm off",
+    "set context-code-lines 6",
+    "set context-sections regs disasm",
+)
+
+
+def compact_gdb_transcript(text: str, max_chars: int = 2000) -> str:
+    """Strip decorative Unicode, whitespace, and cap length for tool responses."""
+    if not text:
+        return text
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = _MESSY_UNICODE_RE.sub(" ", text)
+    lines_out: list[str] = []
+    for line in text.split("\n"):
+        cleaned = re.sub(r"  +", " ", line).strip()
+        if cleaned:
+            lines_out.append(cleaned)
+    text = "\n".join(lines_out)
+    if len(text) > max_chars:
+        drop = len(text) - max_chars
+        text = f"[... {drop} chars omitted ...]\n{text[-max_chars:]}"
+    return text
+
 
 class GDBSession:
     """Manages a persistent GDB process via a PTY."""
@@ -35,7 +66,10 @@ class GDBSession:
 
         self._proc = pexpect.spawn(cmd, timeout=self.timeout, encoding=None)
         self._proc.expect(PROMPT_PATTERN, timeout=self.timeout)
-        return self._clean(self._proc.before)
+        banner = self._clean(self._proc.before)
+        for init_cmd in _GDB_INIT_COMMANDS:
+            self.command(init_cmd, timeout=5)
+        return banner
 
     def command(self, cmd: str, timeout: int | None = None) -> str:
         """Send a command to GDB and return the cleaned output."""

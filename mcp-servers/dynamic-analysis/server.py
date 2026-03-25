@@ -13,7 +13,7 @@ import sys
 from mcp.server.fastmcp import FastMCP
 
 sys.path.insert(0, os.path.dirname(__file__))
-from gdb_session import GDBSession
+from gdb_session import GDBSession, compact_gdb_transcript
 
 mcp = FastMCP(
     name="pwn-dynamic-analysis",
@@ -233,7 +233,7 @@ def gdb_run(
     session.close()
 
     return {
-        "output": output[-4000:] if len(output) > 4000 else output,
+        "output": compact_gdb_transcript(output, max_chars=1800),
         "signal": signal_info,
         "registers": regs,
         "exit_code": exit_code,
@@ -255,13 +255,13 @@ def gdb_breakpoint(
         stdin_data: Optional stdin data for the binary.
         commands: Optional list of GDB commands to run at the breakpoint.
 
-    Returns dict with: registers, stack_dump, output, command_results.
+    Returns dict with: registers, stack_dump, disassembly, output (compact), command_results.
     """
     path = _resolve_binary(binary_path)
     session = _get_session()
     session.start(path)
 
-    bp_output = session.command(f"break *{address}" if address.startswith("0x") else f"break {address}")
+    session.command(f"break *{address}" if address.startswith("0x") else f"break {address}")
 
     if stdin_data:
         output = session.run_with_stdin(stdin_data.encode("latin-1"), timeout=10)
@@ -273,6 +273,8 @@ def gdb_breakpoint(
     regs = _parse_registers(reg_output)
     if not regs:
         regs = _registers_fallback(session)
+
+    disasm = compact_gdb_transcript(session.command("x/12i $rip"), max_chars=1200)
 
     # Dump stack
     stack_output = session.command("x/16gx $rsp")
@@ -286,7 +288,8 @@ def gdb_breakpoint(
     session.close()
 
     return {
-        "output": output[-2000:] if len(output) > 2000 else output,
+        "output": compact_gdb_transcript(output, max_chars=1000),
+        "disassembly": disasm,
         "registers": regs,
         "stack_dump": stack_output,
         "command_results": cmd_results,
@@ -360,7 +363,7 @@ def gdb_vmmap(binary_path: str, stdin_data: str | None = None) -> dict:
     result = session.command("vmmap")
     session.close()
 
-    return {"vmmap": result}
+    return {"vmmap": compact_gdb_transcript(result, max_chars=3500)}
 
 
 @mcp.tool()
