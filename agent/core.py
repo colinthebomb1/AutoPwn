@@ -44,7 +44,7 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _default_max_iterations() -> int:
-    """CLI default when `-n` omitted: env PWN_AGENT_MAX_ITERATIONS, then MAX_AGENT_ITERATIONS, else 15."""
+    """CLI default when `-n` omitted: env PWN_AGENT_MAX_ITERATIONS, then MAX_AGENT_ITERATIONS, else 30."""
     for key in ("PWN_AGENT_MAX_ITERATIONS", "MAX_AGENT_ITERATIONS"):
         raw = os.environ.get(key)
         if raw and str(raw).strip():
@@ -52,7 +52,7 @@ def _default_max_iterations() -> int:
                 return int(raw)
             except ValueError:
                 continue
-    return 15
+    return 30
 
 
 # First N messages are fixed (task + bootstrap). Older turns are dropped to cap input tokens.

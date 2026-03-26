@@ -4,7 +4,7 @@ model:
   temperature: 0.0
 
 agent:
-  max_iterations: 15
+  max_iterations: 30
   timeout_seconds: 300
 
 ghidra:

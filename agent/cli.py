@@ -21,7 +21,7 @@ console = Console()
     "-n",
     default=None,
     type=int,
-    help="Max ReAct iterations (default: env PWN_AGENT_MAX_ITERATIONS / MAX_AGENT_ITERATIONS, else 15)",
+    help="Max ReAct iterations (default: env PWN_AGENT_MAX_ITERATIONS / MAX_AGENT_ITERATIONS, else 30)",
 )
 def main(binary: str, remote: str | None, model: str, max_iterations: int | None) -> None:
     """pwn-solver — Agentic binary exploitation powered by LLMs and MCP tools."""
