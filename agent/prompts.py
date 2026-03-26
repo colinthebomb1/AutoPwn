@@ -31,6 +31,22 @@ If it fails, analyze the error output, adjust offsets or approach, and retry.
 6. **Iterate** — If the exploit crashes, use GDB tools to inspect. Check stack alignment \
 (add a `ret` gadget before function calls on x86_64), verify offsets with `gdb_find_offset`.
 
+## Stack layout pitfalls (amd64, canary, typical GCC)
+
+- **`sub rsp, IMM` in `vuln` is not your padding-to-canary length.** It is the **total** stack frame \
+allocation. Distance from **buffer low address** to the **canary slot** comes from **`%rbp`**-relative \
+addresses (or a `gdb_breakpoint` at `vuln`): e.g. canary at **`[rbp-0x8]`**, buffer at **`[rbp-0x50]`** \
+→ fill **`0x50 - 0x8 = 0x48` (72)** bytes, then 8-byte canary, 8-byte saved RBP, then ROP (**88** to RIP).
+- **`gdb_find_offset`** often ends at **`SIGABRT` / `__stack_chk_fail`** on canary builds — expected. \
+Do **not** “solve” layout by guessing **80** or **96** from **`sub rsp`** alone without **rbp-relative** math.
+- **Prompt sync:** If the program prints **`name?` followed by a newline**, use **`recvuntil(b'name?\\n')`**. \
+**`recvuntil(b'name?')` alone** may never match (newline already in the buffer) → **EOFError**.
+- **Canary value:** In **one running process**, the leak `printf("canary…")` shows the same **`fs:0x28`** \
+value **`vuln` uses**. Do **not** declare “different canaries” by comparing registers from **unrelated** \
+GDB sessions (different runs / prompts / stale state).
+- For **PIE + canary ret2libc**, prefer **`ret2libc_stage1_payload` / `ret2libc_stage2_payload`** with \
+correct **`offset`**, **`canary`**, **`canary_offset`**, and **`pie_base`** over hand-rolled padding guesses.
+
 ## Technique Playbooks
 
 ### ret2win (easiest)
@@ -145,6 +161,8 @@ Re-run tools only when you need additional detail or to validate assumptions.
 ## Rules
 
 - Be methodical. Complete recon before jumping to exploitation.
+- **Markdown:** Never write **empty** inline code (no `` `` and no backticks with only spaces/newlines between). \
+If a value is unknown, say so in plain text (e.g. *unknown* or *not yet determined*).
 - Show your reasoning at each step.
 - When you identify a vulnerability, explain what it is and why it's exploitable.
 - When writing exploits, use pwntools idioms (ELF(), ROP(), p64(), etc.).
@@ -174,6 +192,14 @@ Write self-contained pwntools scripts. Always:
 - The solver mirrors every `run_exploit` script to `exploits/last_attempt_<binary>.py` (overwritten on each attempt), even when the exploit fails — users can open that file to debug.
 - Prefer **`context.log_level = 'error'`** (or omit it); the runner already quiets pwntools. \
 Use **`debug`** only when debugging. Verbose tube logs waste tokens in tool results.
+- **Canary + `read()` / exact buffer fills:** **`sendline` appends `\\n`**. If the buffer is \
+exactly **N** bytes to the canary, **`sendline(b'A'*N)` writes N+1 bytes** and corrupts the canary. \
+Use **`send()`** without a newline for binary/ROP payloads unless the vuln is line-based (`fgets`, etc.).
+- **Leaking `puts@got`:** after a stable marker (e.g. **`recvuntil(b'bye\\n')`**), read **6 bytes** \
+with **`recvn(6)`** or **`recv(6)`** then **`u64(...ljust(8, b'\\x00'))`** — avoid assuming the leak \
+is alone on one **`recvline()`** (ASCII/noise can produce bogus "addresses").
+- **Line-based sync:** prefer **`recvuntil(b'name?\\n')`**, **`recvuntil(b'bye\\n')`**, etc., so you do \
+not stall on a partial delimiter.
 - Print the flag or key output explicitly with `print()`.
 - Handle the case where the process crashes (catch and print the crash info).
 - For x86_64: remember stack alignment — if a call to system/puts/etc segfaults, \
