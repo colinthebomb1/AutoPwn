@@ -271,24 +271,6 @@ class PwnAgent:
                 "strings": strings_res if isinstance(strings_res, list) else strings_res,
                 "strings_note": "If strings look truncated, rerun strings_search when needed.",
             }
-
-            str_list = strings_res if isinstance(strings_res, list) else []
-            fname_l = os.path.basename(binary_path).lower()
-            looks_canary_ret2 = (
-                "ret2libc_pie_canary" in fname_l
-                or any(
-                    isinstance(s, str) and "ret2libc-pie-canary" in s for s in str_list
-                )
-            )
-            if looks_canary_ret2:
-                bootstrap["layout_hint"] = (
-                    "Typical vuln stack for this family: buffer low at rbp-0x50, canary at rbp-0x8 "
-                    "→ 72 bytes fill to canary, 88 bytes to saved RIP (not 80 from sub rsp,0x50). "
-                    "sub rsp,IMM is total frame size, not distance to canary. "
-                    "Use recvuntil(b'name?\\n'). Printed canary "
-                    "matches vuln fs:0x28 in one process; "
-                    "do not compare unrelated GDB runs."
-                )
             # Keep the injected message short enough to avoid token blowups.
             dumped = json.dumps(bootstrap, indent=2, default=str)
             if len(dumped) > 2500:
