@@ -103,10 +103,25 @@ def edit(i,d):p.sendlineafter(b'> ', b'3'); p.sendlineafter(b'index', str(i).enc
 def show(i):  p.sendlineafter(b'> ', b'4'); p.sendlineafter(b'index', str(i).encode()); return p.recvuntil(b'\\n1)', drop=False)
 ```
 
+When binaries mix `scanf("%d", ...)` for menu choices with raw `read()` for edit/write:
+
+- Do **not** validate full exploit flows via one giant static stdin transcript (`gdb_run` input blob).
+  `read()` can greedily consume bytes that were intended as later menu choices, causing fake `bye` exits.
+- Use interactive pwntools sequencing for exploit attempts (`sendlineafter` / `sendafter`) and resync
+  to menu prompt after each action.
+- For raw binary writes, prefer `sendafter(b"data: ", payload)` (not `sendline`) to avoid accidental
+  newline/menu-token contamination.
+
 Tcache notes (glibc 2.35+ safe-linking):
 
 - Tcache bins are LIFO by size class; freed chunk user-data starts with `fd`.
 - Safe-linking encoding: `encoded_fd = (chunk_addr >> 12) ^ target_addr`.
+- **Do not write raw target ptr into `fd`.** If you write `0x404080` directly, glibc will
+  decode it again and you will usually get `malloc(): unaligned tcache chunk detected`.
+- Common failure diagnosis:
+  - `unaligned tcache chunk detected` after poisoning usually means wrong safe-linking math
+    (wrong `chunk_addr` / wrong encode step), not a random timeout.
+  - Use the poisoned chunk's user pointer (the location of `fd`) as `chunk_addr`.
 - UAF poisoning pattern:
   1. Allocate two same-size chunks `A`, `B`.
   2. Free `B`, then `A` (bin head is `A -> B`).

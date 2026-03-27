@@ -23,6 +23,7 @@ tests/challenges/ret2libc_pie_canary_real_x64
 tests/challenges/shellcode_x64
 tests/challenges/format_read_x64
 tests/challenges/format_write_x64
+tests/challenges/heap_tcache_poison_x64
 
 .pytest_cache/
 .ruff_cache/
