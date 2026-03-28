@@ -132,6 +132,29 @@ Tcache notes (glibc 2.35+ safe-linking):
 When available, parse target pointers from banner text (e.g. `is_admin is at %p`) instead of guessing
 symbol addresses from disassembly.
 
+### FSOP (FILE-oriented programming) — basics
+
+On modern glibc (**≈2.34+**), **`__malloc_hook` / `__free_hook` are gone**, so after heap primitives you
+often pivot to **`FILE` / `_IO_FILE_plus` abuse** (FSOP), ROP, or `one_gadget` — not hook overwrites.
+
+**What a `FILE` is (high level):** libc’s stream object holds **buffer pointers** (where reads/writes
+buffer data) and a **vtable pointer** for virtual methods (`overflow`, `underflow`, `xsputn`, …).
+
+**Vtable constraint (glibc ≥ 2.24):** the vtable pointer must resolve to libc’s read-only
+**`__libc_IO_vtables`** — arbitrary **heap** “fake vtables” are rejected. Practical exploits either
+use **legitimate vtable slots** plus controlled **struct fields**, or chain into **ROP** after a
+controlled call path (libc-version sensitive; validate with `gdb_examine` / references).
+
+**From heap UAF to arbitrary read/write (pattern):** overlap or forge memory so it aliases a
+**`FILE *`** (heap `FILE`, or corrupt a global stream pointer). Overwrite **`_IO_read_*`** or
+**`_IO_write_*`** fields so the next **`fread` / `fwrite` / `fflush`** copies bytes **from** or **into**
+a region you choose — subject to **`_flags`**, lock state, and libc checks (full layouts are
+target-specific). **`exit`**, **`abort`**, **`fflush(NULL)`**, and **`fclose`** can walk linked streams
+(`_IO_flush_all_lockp`) and trigger FSOP chains.
+
+**Prerequisites:** almost always a **libc base** (unsorted leak, GOT leak, `libc_symbols`, etc.) for
+vtable symbols and any follow-on ROP.
+
 ### GDB / dynamic analysis
 
 Use **`gdb_run`**, **`gdb_breakpoint`**, **`gdb_stack`**, **`gdb_vmmap`**, **`gdb_examine`** for stack layout, mappings, and pointer checks. Prefer agent tools over ad-hoc shell when possible.
