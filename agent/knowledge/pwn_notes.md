@@ -29,11 +29,12 @@ Use the agent’s **`checksec`** first; confirm with **`elf_symbols`** (PLT/GOT)
 ## Format string — reading (leaks)
 
 - Loop **`%{i}$p`** (or `%{i}$p|` with a delimiter) to map stack slots.
+- **Tight format buffer (e.g. `fgets` into 8–16 bytes):** you cannot fit `%6$p%7$p%8$p...` in one read. Use **one positional leak per process run**: run **`%6$p`**, restart; **`%7$p`**, restart; … (or automate in a loop). Same stack layout each run → combine leaks offline. Do not assume one long format string will work when the name/buffer is truncated.
 - **Rough leak triage (amd64, heuristic):**
   - **`0x55…` / `0x56…`** → often **PIE** mapping → `leaked - offset(symbol)` ≈ binary base.
   - **`0x7fff…` / `0x7ffc…`** → often **stack** → distances to saved RIP / saved pointers (use **`gdb_stack`** / telescope).
   - **`0x7f…`** but not the stack prefix above → often **libc** / loader → subtract known symbol offset for libc base (symbol varies by libc build; prefer **`__libc_start_main`** / `puts` / `_IO_2_1_stdout_` etc. from your ELF).
-- **Multiplex:** one send like `%11$p%16$p%9$p` when layout is stable; parse fixed widths carefully or use delimiters.
+- **Multiplex:** one send like `%11$p%16$p%9$p` when the **buffer is long enough** and layout is stable; parse fixed widths carefully or use delimiters. If the buffer is short, use **multi-run** leaks instead (see above).
 - **String leak:** `%{i}$s` only when the **i-th “argument” is a valid readable pointer** — otherwise crash. Use for flag buffers / env already on stack.
 
 ## Format string — writing

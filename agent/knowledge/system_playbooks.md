@@ -61,9 +61,10 @@ NX is disabled, so the stack is executable. The test binary is **Phoenix stack-f
 1. `checksec` → note mitigations
 2. Dump stack: `%p` chain, or **`AAAAAAAA` + `%p.%p...`** until you see **`0x4141414141414141`** to align read position with write exploits.
 3. **Leak triage (amd64 heuristics — confirm per target):** addresses starting **`0x55`/`0x56`** often map the **PIE binary**; **`0x7fff`/`0x7ffc`** often **stack**; **`0x7f`…** (non-stack) often **libc**. Use **`gdb_examine`** / **`gdb_stack`** to verify before computing bases.
-4. One-shot multiplex: e.g. `%11$p%16$p%9$p` with stable parsing when the challenge allows.
-5. **`%N$s`** — only if argument **N** holds a **valid pointer**; else SIGSEGV. Useful for strings already on stack (opened file path, env).
-6. If the challenge **filters `$`**, use **`%c` chains** or raw pwntools **`fmtstr_payload(..., no_dollars=True)`**; the `format_string_payload` tool has **`no_dollars`** for that.
+4. One-shot multiplex: e.g. `%11$p%16$p%9$p` with stable parsing when the challenge allows **and** the vulnerable buffer can hold the full string (watch **`fgets` / `read` length**).
+5. **Short format buffer:** if the bug only receives **8–16 bytes** (truncated `tinkerer_name`–style), you cannot pack many `%p` in one go. **Probe one index per run:** spawn the binary, send **`%6$p\\n`**, parse libc/PIE/stack from output; repeat with **`%7$p`**, **`%8$p`**, … on **fresh processes**. Stack slots for `printf` arguments are stable across runs at the same program point — merge leaks in the exploit script. Avoid gdb-only assumptions when automating.
+6. **`%N$s`** — only if argument **N** holds a **valid pointer**; else SIGSEGV. Useful for strings already on stack (opened file path, env).
+7. If the challenge **filters `$`**, use **`%c` chains** or raw pwntools **`fmtstr_payload(..., no_dollars=True)`**; the `format_string_payload` tool has **`no_dollars`** for that.
 
 ### Format string — write (overwrite memory)
 
