@@ -44,6 +44,38 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or not str(raw).strip():
+        return default
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _bootstrap_ghidra_function_names(func_addrs: dict[str, Any], max_funcs: int) -> list[str]:
+    """Pick a bounded set of symbol names to decompile at startup (prioritize interesting entrypoints)."""
+    if not isinstance(func_addrs, dict) or not func_addrs:
+        return ["main"]
+    keys = [k for k in func_addrs if isinstance(k, str)]
+    priority: list[str] = []
+    for name in ("main", "vuln", "win", "pwn"):
+        if name in keys and name not in priority:
+            priority.append(name)
+    fixed_skip = frozenset({"_init", "_fini", "_start", "start"})
+    rest: list[str] = []
+    for k in sorted(keys):
+        if k in priority or k in fixed_skip:
+            continue
+        if k.startswith("__"):
+            continue
+        if k.startswith("register_tm") or k.startswith("deregister"):
+            continue
+        rest.append(k)
+    out = priority + rest
+    if not out:
+        return ["main"]
+    return out[: max(1, max_funcs)]
+
+
 def _default_max_iterations() -> int:
     """CLI default when `-n` omitted: env `PWN_AGENT_MAX_ITERATIONS`, else 30."""
     raw = os.environ.get("PWN_AGENT_MAX_ITERATIONS")
@@ -317,10 +349,10 @@ class PwnAgent:
         ]
 
         # ------------------------------------------------------------------
-        # Bootstrap analysis (cheap local tools)
+        # Bootstrap analysis (cheap local tools + optional Ghidra)
         # ------------------------------------------------------------------
         # The goal is to avoid the agent spending early iterations re-running
-        # `checksec`, `elf_symbols`, and `strings_search`.
+        # `checksec`, `elf_symbols`, `strings_search`, and (when configured) `ghidra_decompile`.
         def _bootstrap() -> str:
             def _safe_call(name: str, args: dict) -> Any:
                 try:
@@ -384,6 +416,27 @@ class PwnAgent:
                         out[k] = d[k]
                 return out
 
+            ghidra_res: Any = None
+            ghidra_names: list[str] = []
+            if _env_bool("PWN_AGENT_BOOTSTRAP_GHIDRA", True):
+                max_fn = _env_int("PWN_AGENT_BOOTSTRAP_GHIDRA_MAX_FUNCS", 12)
+                ghidra_names = _bootstrap_ghidra_function_names(func_addrs, max_fn)
+                timeout_s = _env_int("PWN_AGENT_BOOTSTRAP_GHIDRA_TIMEOUT", 300)
+                per_fn = _env_int("PWN_AGENT_BOOTSTRAP_GHIDRA_MAX_CHARS", 6000)
+                console.print(
+                    "[dim]Bootstrap: Ghidra decompile ("
+                    f"{len(ghidra_names)} functions, timeout {timeout_s}s)…[/dim]"
+                )
+                ghidra_res = _safe_call(
+                    "ghidra_decompile",
+                    {
+                        "binary_path": binary_path,
+                        "functions": ghidra_names,
+                        "timeout": timeout_s,
+                        "max_chars_per_function": per_fn,
+                    },
+                )
+
             bootstrap = {
                 "checksec": checksec_res,
                 "main": main_addr,
@@ -398,11 +451,23 @@ class PwnAgent:
                 # Unfiltered; may be truncated by the overall bootstrap size cap.
                 "strings": strings_res if isinstance(strings_res, list) else strings_res,
                 "strings_note": "If strings look truncated, rerun strings_search when needed.",
+                "ghidra_decompile": ghidra_res,
+                "ghidra_functions_requested": ghidra_names,
+                "ghidra_note": (
+                    "Pseudocode from headless Ghidra when ok=true; reuse before re-calling "
+                    "ghidra_decompile. Set PWN_AGENT_BOOTSTRAP_GHIDRA=0 to skip."
+                ),
             }
-            # Keep the injected message short enough to avoid token blowups.
+            # Keep the injected message short enough to avoid token blowups; allow more when
+            # Ghidra succeeded (decompilation is the main reason for a larger bootstrap).
+            ghidra_ok = isinstance(ghidra_res, dict) and ghidra_res.get("ok") is True
+            if ghidra_ok:
+                cap = _env_int("PWN_AGENT_BOOTSTRAP_MAX_CHARS_WITH_GHIDRA", 12000)
+            else:
+                cap = _env_int("PWN_AGENT_BOOTSTRAP_MAX_CHARS", 2500)
             dumped = json.dumps(bootstrap, indent=2, default=str)
-            if len(dumped) > 2500:
-                dumped = dumped[:2500] + "\n... [bootstrap truncated]"
+            if len(dumped) > cap:
+                dumped = dumped[:cap] + "\n... [bootstrap truncated]"
             return dumped
 
         bootstrap_msg = _bootstrap()
@@ -414,7 +479,9 @@ class PwnAgent:
                     f"Analyze and exploit the binary at `{binary_path}`. "
                     "Start with `checksec` + `elf_symbols` for recon, "
                     "but if bootstrap provides those values, reuse them. "
-                    f"Use gdb_find_offset to determine buffer overflow offsets precisely."
+                    "If bootstrap includes `ghidra_decompile` with ok=true, treat that pseudocode "
+                    "as primary source for control flow before writing exploits. "
+                    "Use gdb_find_offset to determine buffer overflow offsets precisely."
                 ),
             }
         ]
@@ -423,7 +490,8 @@ class PwnAgent:
             {
                 "role": "user",
                 "content": (
-                    "Bootstrap analysis computed locally to help you start faster. "
+                    "Bootstrap analysis computed locally to help you start faster "
+                    "(checksec, symbols, strings, and Ghidra pseudocode when the host has it). "
                     "You can use it as context, but feel free to rerun any tools if needed.\n\n"
                     f"{bootstrap_msg}"
                 ),

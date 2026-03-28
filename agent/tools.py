@@ -19,6 +19,7 @@ TOOL_MODULE_MAP: dict[str, str] = {
     "ret2libc_stage1_payload": "exploit",
     "ret2libc_stage2_payload": "exploit",
     "format_string_payload": "exploit",
+    "ghidra_decompile": "exploit",
     "run_exploit": "exploit",
     "gdb_find_offset": "dynamic",
     "gdb_run": "dynamic",
@@ -211,6 +212,39 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
                 "saved_rbp": {"type": "string", "description": "Optional saved RBP value to place after canary. Default 0x0."},
             },
             "required": ["binary_path", "libc_path", "offset", "leaked_symbol", "leaked_address"],
+        },
+    },
+    "ghidra_decompile": {
+        "description": (
+            "Decompile specific functions to Ghidra pseudocode (C-like) via local headless Ghidra. "
+            "The agent bootstrap often runs this already for a bounded set of symbols — check "
+            "bootstrap `ghidra_decompile` before repeating. Use for extra functions or after "
+            "bootstrap truncation. Requires GHIDRA_HOME (or PWN_GHIDRA_HOME) and Java. "
+            "Pass symbol names (e.g. main, vuln, handler_fn)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "binary_path": {"type": "string", "description": "Path to the ELF or binary"},
+                "functions": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Function/symbol names to decompile (e.g. main, vuln).",
+                },
+                "ghidra_home": {
+                    "type": "string",
+                    "description": "Optional Ghidra install root (overrides GHIDRA_HOME / PWN_GHIDRA_HOME).",
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "analyzeHeadless timeout in seconds. Default 600.",
+                },
+                "max_chars_per_function": {
+                    "type": "integer",
+                    "description": "Trim long decompilation text. Default 24000.",
+                },
+            },
+            "required": ["binary_path", "functions"],
         },
     },
     "format_string_payload": {

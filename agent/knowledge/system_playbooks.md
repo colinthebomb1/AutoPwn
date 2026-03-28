@@ -138,4 +138,4 @@ Use **`gdb_run`**, **`gdb_breakpoint`**, **`gdb_stack`**, **`gdb_vmmap`**, **`gd
 
 ### Bootstrap usage
 
-If bootstrap context is present, reuse it for first-pass recon (mitigations, symbols, strings). Re-run tools only when you need additional detail or to validate assumptions.
+If bootstrap context is present, reuse it for first-pass recon (mitigations, symbols, strings, and **Ghidra pseudocode** when included). Re-run tools only when you need additional detail or to validate assumptions. Disable expensive startup Ghidra with `PWN_AGENT_BOOTSTRAP_GHIDRA=0` if the host is slow or Ghidra is unavailable.

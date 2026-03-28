@@ -26,6 +26,7 @@ Agentic binary exploitation framework built around an LLM-driven ReAct loop, MCP
 - Python 3.11+
 - `gdb` available for dynamic-analysis tools
 - optional: `pwntools` extras for exploit workflows
+- optional: [Ghidra](https://ghidra-sre.org/) + a JDK for the `ghidra_decompile` tool (set `GHIDRA_HOME` / `PWN_GHIDRA_HOME`; put `java` on `PATH` or set `JAVA_HOME` / `PWN_JAVA_HOME`)
 
 ## Installation
 
@@ -50,6 +51,9 @@ Optional knobs:
 - `PWN_AGENT_TOOL_RESULT_MAX`
 - `PWN_AGENT_RUN_EXPLOIT_SCRIPT_SNIP`
 - `PWN_AGENT_MAX_OUTPUT_TOKENS`
+- `PWN_AGENT_BOOTSTRAP_GHIDRA` (default: `1`) — run headless Ghidra once at startup; set `0` to skip
+- `PWN_AGENT_BOOTSTRAP_MAX_CHARS_WITH_GHIDRA` — larger bootstrap JSON cap when decompilation succeeds (default `12000`)
+- `JAVA_HOME` or `PWN_JAVA_HOME` — if `java` is not on your `PATH` (common in some venvs/IDE launches), point at a JDK so Ghidra can start
 
 ## Quick Start
 
