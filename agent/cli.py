@@ -23,7 +23,27 @@ console = Console()
     type=int,
     help="Max ReAct iterations (default: env PWN_AGENT_MAX_ITERATIONS, else 30)",
 )
-def main(binary: str, remote: str | None, model: str, max_iterations: int | None) -> None:
+@click.option(
+    "--notes",
+    default=None,
+    type=str,
+    help="Optional challenge context: CTF description, constraints, or suspected solve path.",
+)
+@click.option(
+    "--notes-file",
+    "notes_file",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, path_type=str),
+    help="Read notes from a UTF-8 file (use for long writeups). Overrides --notes if both are set.",
+)
+def main(
+    binary: str,
+    remote: str | None,
+    model: str,
+    max_iterations: int | None,
+    notes: str | None,
+    notes_file: str | None,
+) -> None:
     """pwn-solver — Agentic binary exploitation powered by LLMs and MCP tools."""
     load_dotenv()
 
@@ -37,8 +57,15 @@ def main(binary: str, remote: str | None, model: str, max_iterations: int | None
 
     from agent.core import PwnAgent
 
+    user_context: str | None = None
+    if notes_file:
+        with open(notes_file, encoding="utf-8") as nf:
+            user_context = nf.read()
+    elif notes is not None:
+        user_context = notes
+
     agent = PwnAgent(model=model, max_iterations=max_iterations, api_key=api_key)
-    result = agent.solve(binary_path=binary, remote=remote)
+    result = agent.solve(binary_path=binary, remote=remote, user_context=user_context)
 
     console.print()
     if result.success:

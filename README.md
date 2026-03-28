@@ -54,6 +54,7 @@ Optional knobs:
 - `PWN_AGENT_BOOTSTRAP_GHIDRA` (default: `1`) — run headless Ghidra once at startup; set `0` to skip
 - `PWN_AGENT_BOOTSTRAP_MAX_CHARS_WITH_GHIDRA` — larger bootstrap JSON cap when decompilation succeeds (default `12000`)
 - `JAVA_HOME` or `PWN_JAVA_HOME` — if `java` is not on your `PATH` (common in some venvs/IDE launches), point at a JDK so Ghidra can start
+- `PWN_AGENT_USER_CONTEXT_MAX` — max length for `--notes` / `--notes-file` text sent to the model (default `12000`)
 
 ## Quick Start
 
@@ -74,6 +75,20 @@ Use remote target:
 ```bash
 pwn-solver ./chall -r host:port
 ```
+
+Add **CTF or author context** (description, constraints, suspected bug class, solve sketch):
+
+```bash
+pwn-solver ./chall --notes "Heap UAF + FSOP; libc 2.39, Full RELRO"
+```
+
+Long writeups:
+
+```bash
+pwn-solver ./chall --notes-file ./challenge.txt
+```
+
+(`--notes-file` overrides `--notes` if both are passed.)
 
 ## Testing
 

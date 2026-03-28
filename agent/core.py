@@ -88,16 +88,17 @@ def _default_max_iterations() -> int:
 
 
 # First N messages are fixed (task + bootstrap). Older turns are dropped to cap input tokens.
-_CONTEXT_HEAD_MESSAGES = 2
+def _trim_conversation(messages: list[dict], *, head_messages: int = 2) -> None:
+    """Keep opening messages plus the last few assistant↔user rounds (in-place).
 
-
-def _trim_conversation(messages: list[dict]) -> None:
-    """Keep opening messages plus the last few assistant↔user rounds (in-place)."""
+    ``head_messages`` is 2 by default (task + bootstrap), or 3 when optional user
+    context (CTF notes) was inserted between them.
+    """
     turns = max(1, _env_int("PWN_AGENT_CONTEXT_TURNS", 8))
     max_tail = turns * 2  # each turn: assistant, then user(tool results)
-    if len(messages) <= _CONTEXT_HEAD_MESSAGES + max_tail:
+    if len(messages) <= head_messages + max_tail:
         return
-    messages[:] = messages[:_CONTEXT_HEAD_MESSAGES] + messages[-max_tail:]
+    messages[:] = messages[:head_messages] + messages[-max_tail:]
 
 
 def _shallow_copy_trunc_run_exploit_script(result: Any) -> Any:
@@ -312,17 +313,43 @@ class PwnAgent:
         )
         self.client = anthropic.Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY"))
 
-    def solve(self, binary_path: str, remote: str | None = None) -> AgentResult:
-        """Run the full ReAct loop to analyze and exploit a binary."""
+    def solve(
+        self,
+        binary_path: str,
+        remote: str | None = None,
+        *,
+        user_context: str | None = None,
+    ) -> AgentResult:
+        """Run the full ReAct loop to analyze and exploit a binary.
+
+        ``user_context``: optional free-form text from the operator (CTF story,
+        constraints, suspected bug class or solve sketch). Shown to the model before
+        bootstrap. Length capped by ``PWN_AGENT_USER_CONTEXT_MAX`` (default 12000).
+        """
         binary_path = os.path.abspath(binary_path)
         if not os.path.isfile(binary_path):
             return AgentResult(
                 success=False, summary=f"Binary not found: {binary_path}", iterations=0
             )
 
+        panel_lines = f"[bold]Target:[/bold] {binary_path}"
+        uc = (user_context or "").strip()
+        if uc:
+            cap = _env_int("PWN_AGENT_USER_CONTEXT_MAX", 12000)
+            if len(uc) > cap:
+                uc = uc[:cap] + "\n... [user context truncated; raise PWN_AGENT_USER_CONTEXT_MAX]"
+                console.print(
+                    "[dim]User context truncated to "
+                    f"PWN_AGENT_USER_CONTEXT_MAX ({cap}) chars.[/dim]"
+                )
+            user_context = uc
+            panel_lines += f"\n[bold]Operator notes:[/bold] {len(user_context)} chars"
+        else:
+            user_context = None
+
         console.print(
             Panel(
-                f"[bold]Target:[/bold] {binary_path}",
+                panel_lines,
                 title="pwn-solver",
                 border_style="blue",
             )
@@ -486,6 +513,20 @@ class PwnAgent:
             }
         ]
 
+        if user_context:
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "The operator provided **challenge context** below (CTF description, "
+                        "constraints, or a hypothesized solve path). Treat it as intent to "
+                        "prioritize and reconcile with the binary and tools — it may be wrong.\n\n"
+                        "---\n\n"
+                        f"{user_context}"
+                    ),
+                }
+            )
+
         messages.append(
             {
                 "role": "user",
@@ -497,6 +538,8 @@ class PwnAgent:
                 ),
             }
         )
+
+        head_messages = 3 if user_context else 2
 
         all_tool_calls: list[dict] = []
         planner_injected = False
@@ -647,7 +690,7 @@ class PwnAgent:
                     })
 
                 messages.append({"role": "user", "content": tool_results})
-                _trim_conversation(messages)
+                _trim_conversation(messages, head_messages=head_messages)
 
             if response.stop_reason == "end_turn" and tool_use_blocks:
                 continue
