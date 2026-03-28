@@ -63,3 +63,8 @@ def format_read_binary() -> str:
 @pytest.fixture
 def format_write_binary() -> str:
     return _compile_if_missing("format_write_x64")
+
+
+@pytest.fixture
+def heap_tcache_poison_binary() -> str:
+    return _compile_if_missing("heap_tcache_poison_x64")

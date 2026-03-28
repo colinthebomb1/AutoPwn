@@ -91,6 +91,47 @@ When you need **`libc.address`** but have overflow + symbols:
 
 If a read/print echoes your input past the buffer until NUL: fill with non-null bytes up to the canary, leak **up to and including** the first canary byte; often reconstruct with **`u64`** (**low byte of canary is often 0x00** on amd64 — see knowledge base). When building ret2libc payloads after a canary leak, use `ret2libc_stage1_payload` / `ret2libc_stage2_payload` with `canary=<hex>`, `canary_offset=<int>`, and optional `saved_rbp`.
 
+### Heap (tcache poisoning / UAF)
+
+Menu-driven heap binaries need **multi-step interaction** (not single stdin payload). Prefer helper
+functions that use `sendlineafter` / `recvuntil` for each prompt:
+
+```python
+def alloc(i): p.sendlineafter(b'> ', b'1'); p.sendlineafter(b'index', str(i).encode())
+def free(i):  p.sendlineafter(b'> ', b'2'); p.sendlineafter(b'index', str(i).encode())
+def edit(i,d):p.sendlineafter(b'> ', b'3'); p.sendlineafter(b'index', str(i).encode()); p.send(d)
+def show(i):  p.sendlineafter(b'> ', b'4'); p.sendlineafter(b'index', str(i).encode()); return p.recvuntil(b'\\n1)', drop=False)
+```
+
+When binaries mix `scanf("%d", ...)` for menu choices with raw `read()` for edit/write:
+
+- Do **not** validate full exploit flows via one giant static stdin transcript (`gdb_run` input blob).
+  `read()` can greedily consume bytes that were intended as later menu choices, causing unintended early exits.
+- Use interactive pwntools sequencing for exploit attempts (`sendlineafter` / `sendafter`) and resync
+  to menu prompt after each action.
+- For raw binary writes, prefer `sendafter(b"data: ", payload)` (not `sendline`) to avoid accidental
+  newline/menu-token contamination.
+
+Tcache notes (glibc 2.35+ safe-linking):
+
+- Tcache bins are LIFO by size class; freed chunk user-data starts with `fd`.
+- Safe-linking encoding: `encoded_fd = (chunk_addr >> 12) ^ target_addr`.
+- **Do not write raw target ptr into `fd`.** If you write `0x404080` directly, glibc will
+  decode it again and you will usually get `malloc(): unaligned tcache chunk detected`.
+- Common failure diagnosis:
+  - `unaligned tcache chunk detected` after poisoning usually means wrong safe-linking math
+    (wrong `chunk_addr` / wrong encode step), not a random timeout.
+  - Use the poisoned chunk's user pointer (the location of `fd`) as `chunk_addr`.
+- UAF poisoning pattern:
+  1. Allocate two same-size chunks `A`, `B`.
+  2. Free `B`, then `A` (bin head is `A -> B`).
+  3. Use UAF on `A` to overwrite its encoded `fd` with `((A_addr >> 12) ^ target)`.
+  4. Allocate once (gets `A`), allocate again (returns `target` overlap).
+  5. Write non-zero to the target gate (e.g. a permission/flag variable) and trigger the success path.
+
+When available, parse target pointers from banner text (e.g. `is_admin is at %p`) instead of guessing
+symbol addresses from disassembly.
+
 ### GDB / dynamic analysis
 
 Use **`gdb_run`**, **`gdb_breakpoint`**, **`gdb_stack`**, **`gdb_vmmap`**, **`gdb_examine`** for stack layout, mappings, and pointer checks. Prefer agent tools over ad-hoc shell when possible.

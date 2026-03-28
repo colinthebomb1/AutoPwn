@@ -6,6 +6,7 @@ import json
 import os
 import random
 import re
+import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
@@ -93,6 +94,37 @@ def _tool_result_str_for_api(tool_name: str, result: Any, suffix: str = "") -> s
     if len(body) > cap:
         body = body[:cap] + "\n... [truncated]"
     return body
+
+
+def _run_exploit_failure_hint(result: Any) -> str:
+    """Return concise recovery hints for common run_exploit failure modes."""
+    if not isinstance(result, dict):
+        return ""
+    stderr = str(result.get("stderr", "") or "")
+    stdout = str(result.get("stdout", "") or "")
+    timed_out = bool(result.get("timed_out", False))
+    out = (stdout + "\n" + stderr).lower()
+
+    hints: list[str] = []
+    if timed_out:
+        hints.append(
+            "timeout likely from I/O desync; prefer sendlineafter/sendafter per "
+            "prompt and avoid giant static stdin transcripts"
+        )
+    if "eoferror" in out or "brokenpipe" in out:
+        hints.append(
+            "target exited before next send; parse transcript to find last "
+            "successful prompt and re-sync interaction"
+        )
+    if "unaligned tcache chunk detected" in out:
+        hints.append(
+            "tcache fd likely not correctly safe-linked; verify encoded fd "
+            "uses (chunk_addr>>12)^target_addr"
+        )
+
+    if not hints:
+        return ""
+    return "\n[run_exploit recovery hint] " + " | ".join(hints)
 
 
 def _usage_to_dict(usage: Any) -> dict[str, int]:
@@ -296,6 +328,18 @@ class PwnAgent:
                 except Exception as e:
                     return {"error": f"{type(e).__name__}: {e}"}
 
+            def _safe_cmd(cmd: list[str], timeout_s: int = 3) -> str | None:
+                try:
+                    out = subprocess.check_output(
+                        cmd,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        timeout=timeout_s,
+                    )
+                    return out.strip()
+                except Exception:
+                    return None
+
             checksec_res = _safe_call("checksec", {"binary_path": binary_path})
             funcs_res = _safe_call(
                 "elf_symbols", {"binary_path": binary_path, "symbol_type": "functions"}
@@ -305,6 +349,26 @@ class PwnAgent:
             strings_res = _safe_call(
                 "strings_search", {"binary_path": binary_path, "min_length": 4}
             )
+            ldd_out = _safe_cmd(["ldd", binary_path])
+            interp_out = _safe_cmd(["readelf", "-l", binary_path])
+
+            runtime_libc_lines: list[str] = []
+            runtime_loader: str | None = None
+            if isinstance(ldd_out, str):
+                for line in ldd_out.splitlines():
+                    s = line.strip()
+                    if not s:
+                        continue
+                    if "libc.so" in s:
+                        runtime_libc_lines.append(s)
+                    if "ld-linux" in s or "ld-musl" in s:
+                        runtime_loader = s
+
+            requested_interp: str | None = None
+            if isinstance(interp_out, str):
+                m = re.search(r"Requesting program interpreter:\s*(.+?)\]", interp_out)
+                if m:
+                    requested_interp = m.group(1).strip()
 
             plt = plt_res.get("plt", {}) if isinstance(plt_res, dict) else {}
             got = got_res.get("got", {}) if isinstance(got_res, dict) else {}
@@ -326,6 +390,11 @@ class PwnAgent:
                 "vuln": vuln_addr,
                 "plt": _pick(plt, ("puts", "printf", "read", "system")),
                 "got": _pick(got, ("puts", "printf", "read", "system")),
+                "runtime": {
+                    "ldd_libc_lines": runtime_libc_lines,
+                    "ldd_loader_line": runtime_loader,
+                    "requested_program_interpreter": requested_interp,
+                },
                 # Unfiltered; may be truncated by the overall bootstrap size cap.
                 "strings": strings_res if isinstance(strings_res, list) else strings_res,
                 "strings_note": "If strings look truncated, rerun strings_search when needed.",
@@ -497,6 +566,9 @@ class PwnAgent:
                                 border_style="magenta",
                             )
                         )
+
+                    if tool_name == "run_exploit":
+                        suffix += _run_exploit_failure_hint(result)
 
                     result_str = _tool_result_str_for_api(tool_name, result, suffix)
 
