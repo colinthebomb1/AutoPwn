@@ -36,6 +36,7 @@ Use the agent’s **`checksec`** first; confirm with **`elf_symbols`** (PLT/GOT)
   - **Libc:** **`0x7f…`** in a **mapped** range; subtract **`__libc_start_main`**, **`puts`**, etc. → **`libc.base`**. **`0x7fff/7ffe/7ffd…`** are usually **stack**, not libc.
   - **Stack:** **`0x7fff…` / `0x7ffe…`** typical for RSP region.
 - **If a leak does not resolve to a base:** try **another** `%N$p`, or the same value with **different** **`leaked_symbol`** in **`libc_base_from_leak`** / **`pie_base_from_leak`**; confirm with **`gdb_stack`** / **`vmmap`** instead of guessing “libc” from prefix alone.
+- **Multi-run example** (pwntools loop, one `%N$p` per process): see **`system_playbooks.md`** → Format string — read → *Example: pwntools multi-run*.
 - **Multiplex** (`%11$p%16$p…`) only when the buffer **provably** fits and parsing is stable; otherwise **multi-run**.
 - **String leak:** `%{i}$s` only when the **i-th “argument” is a valid readable pointer** — otherwise crash. Use for flag buffers / env already on stack.
 

