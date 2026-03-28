@@ -24,6 +24,11 @@ tests/challenges/shellcode_x64
 tests/challenges/format_read_x64
 tests/challenges/format_write_x64
 tests/challenges/heap_tcache_poison_x64
+tests/challenges/fsop_win_x64
+tests/challenges/fsop_shell_x64
+tests/challenges/fsop_starshard_x64
+tests/challenges/starshard_core.txt
+/starshard_core.txt
 
 .pytest_cache/
 .ruff_cache/

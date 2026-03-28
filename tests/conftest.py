@@ -68,3 +68,18 @@ def format_write_binary() -> str:
 @pytest.fixture
 def heap_tcache_poison_binary() -> str:
     return _compile_if_missing("heap_tcache_poison_x64")
+
+
+@pytest.fixture
+def fsop_win_binary() -> str:
+    return _compile_if_missing("fsop_win_x64")
+
+
+@pytest.fixture
+def fsop_shell_binary() -> str:
+    return _compile_if_missing("fsop_shell_x64")
+
+
+@pytest.fixture
+def fsop_starshard_binary() -> str:
+    return _compile_if_missing("fsop_starshard_x64")

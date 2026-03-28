@@ -69,6 +69,14 @@ Use the agent’s **`checksec`** first; confirm with **`elf_symbols`** (PLT/GOT)
 - **Safe-linking** and newer hardening change pointer encoding — treat writeups as **version-specific**.
 - Further reading: tcache internals and “safe linking” posts (search tcache glibc 2.26 / 2.32+).
 
+**FSOP (glibc ≥ 2.34):** hooks removed — abuse a live `FILE *` + trigger (`fflush` / `fclose`). **Partial
+RELRO:** `fflush` fake-write into GOT is viable. **Full RELRO:** no GOT overwrite — use libc-relative
+vtable tricks (e.g. **`_IO_wfile_jumps - 0x18`** + wfile underflow chains on modern glibc) or
+**`_IO_str_overflow` / `fclose`**-style paths; all are **libc-version-sensitive**. Leak **`libc.base`**
+from the **vtable qword at `FILE+0xd8`** minus **`_IO_file_jumps`**. `_IO_FILE` is ~0x1d8 bytes;
+`_IO_vtable_check` rejects arbitrary heap “fake vtables”. Use **`FileStructure`** and **`gdb_examine
+&_IO_2_1_stdout_`** on the target libc before crafting payloads.
+
 ## Misc tricks
 
 - **Predictable `rand`:** seed `srand(time(NULL))` and match with **ctypes** `libc.srand` / `libc.rand` in sync with `process()` start when the challenge uses wall-clock time naively.

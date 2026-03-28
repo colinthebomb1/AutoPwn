@@ -9,8 +9,13 @@ CFLAGS_SHELLCODE  = -fno-stack-protector -no-pie -z execstack -z norelro \
 CFLAGS_FMTREAD    = -fno-stack-protector -no-pie -z norelro -Wno-format-security
 CFLAGS_FMTWRITE   = -fno-stack-protector -no-pie -z norelro -Wno-format-security
 CFLAGS_HEAP       = -fno-stack-protector -no-pie -z relro -Wno-format-security
+# -Wl,-z,lazy: without this, recent gcc defaults to immediate binding (Full RELRO); GOT overwrite needs Partial RELRO.
+CFLAGS_FSOP       = -fno-stack-protector -pie -Wl,-z,relro -Wl,-z,lazy -Wno-deprecated-declarations
+CFLAGS_FSOP_SHELL = -fno-stack-protector -pie -Wl,-z,relro -Wl,-z,now -Wno-deprecated-declarations
+# Starshard-style lab: canary on stack + Full RELRO (matches public write-up mitigations loosely).
+CFLAGS_FSOP_STARSHARD = -fstack-protector-strong -pie -Wl,-z,relro -Wl,-z,now -Wno-format-security
 
-BINARIES = ret2win_x64 ret2libc_x64 ret2libc_real_x64 ret2libc_pie_real_x64 ret2libc_pie_canary_real_x64 shellcode_x64 format_read_x64 format_write_x64 heap_tcache_poison_x64
+BINARIES = ret2win_x64 ret2libc_x64 ret2libc_real_x64 ret2libc_pie_real_x64 ret2libc_pie_canary_real_x64 shellcode_x64 format_read_x64 format_write_x64 heap_tcache_poison_x64 fsop_win_x64 fsop_shell_x64 fsop_starshard_x64
 
 all: $(BINARIES)
 
@@ -40,6 +45,15 @@ format_write_x64: format_write.c
 
 heap_tcache_poison_x64: heap_tcache_poison.c
 	$(CC) $(CFLAGS_HEAP) -o $@ $<
+
+fsop_win_x64: fsop_win.c
+	$(CC) $(CFLAGS_FSOP) -o $@ $<
+
+fsop_shell_x64: fsop_shell.c
+	$(CC) $(CFLAGS_FSOP_SHELL) -o $@ $<
+
+fsop_starshard_x64: fsop_starshard.c
+	$(CC) $(CFLAGS_FSOP_STARSHARD) -o $@ $<
 
 clean:
 	rm -f $(BINARIES)
