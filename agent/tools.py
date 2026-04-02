@@ -1,4 +1,4 @@
-"""Tool registry and module routing for the pwn-solver agent."""
+"""Tool registry and module routing for the AutoPwn agent."""
 
 from __future__ import annotations
 

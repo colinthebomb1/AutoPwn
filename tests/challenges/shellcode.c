@@ -1,5 +1,5 @@
 /*
- * Phoenix stack-five (Exploit Education) with a pwn-solver tweak.
+ * Phoenix stack-five (Exploit Education) with an AutoPwn tweak.
  *
  * Original: https://github.com/ExploitEducation/Phoenix/blob/master/stack-five.c
  * ("Can you execve("/bin/sh", ...) ?")

@@ -1,4 +1,4 @@
-"""CLI entry point for pwn-solver."""
+"""CLI entry point for AutoPwn."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def main(
     notes: str | None,
     notes_file: str | None,
 ) -> None:
-    """pwn-solver — Agentic binary exploitation powered by LLMs and MCP tools."""
+    """AutoPwn — Agentic binary exploitation powered by LLMs and MCP tools."""
     load_dotenv()
 
     api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -55,7 +55,7 @@ def main(
         )
         sys.exit(1)
 
-    from agent.core import PwnAgent
+    from agent.core import AutoPwnAgent
 
     user_context: str | None = None
     if notes_file:
@@ -64,7 +64,7 @@ def main(
     elif notes is not None:
         user_context = notes
 
-    agent = PwnAgent(model=model, max_iterations=max_iterations, api_key=api_key)
+    agent = AutoPwnAgent(model=model, max_iterations=max_iterations, api_key=api_key)
     result = agent.solve(binary_path=binary, remote=remote, user_context=user_context)
 
     console.print()

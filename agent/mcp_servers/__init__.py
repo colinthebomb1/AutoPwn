@@ -1,1 +1,1 @@
-"""Packaged MCP server implementations used by the pwn-solver agent."""
+"""Packaged MCP server implementations used by the AutoPwn agent."""

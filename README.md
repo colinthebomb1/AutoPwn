@@ -1,8 +1,8 @@
-# pwn-solver
+# AutoPwn
 
 Agentic binary exploitation framework built around an LLM-driven ReAct loop, MCP tool servers, and pwntools execution.
 
-`pwn-solver` analyzes ELF binaries, chooses exploitation strategies based on mitigations, and iterates toward working exploits with built-in dynamic-analysis and exploit-generation tools.
+`AutoPwn` analyzes ELF binaries, chooses exploitation strategies based on mitigations, and iterates toward working exploits with built-in dynamic-analysis and exploit-generation tools.
 
 ## Features
 
@@ -31,8 +31,8 @@ Agentic binary exploitation framework built around an LLM-driven ReAct loop, MCP
 ## Installation
 
 ```bash
-git clone https://github.com/colinthebomb1/pwn-solver.git
-cd pwn-solver
+git clone https://github.com/colinthebomb1/AutoPwn.git
+cd AutoPwn
 python -m venv .venv
 source .venv/bin/activate
 pip install .
@@ -61,31 +61,31 @@ Optional knobs:
 Run against a local challenge binary:
 
 ```bash
-pwn-solver tests/challenges/ret2win_x64
+autopwn tests/challenges/ret2win_x64
 ```
 
 Override model / iteration budget:
 
 ```bash
-pwn-solver tests/challenges/ret2libc_real_x64 -m claude-sonnet-4-20250514 -n 20
+autopwn tests/challenges/ret2libc_real_x64 -m claude-sonnet-4-20250514 -n 20
 ```
 
 Use remote target:
 
 ```bash
-pwn-solver ./chall -r host:port
+autopwn ./chall -r host:port
 ```
 
 Add **CTF or author context** (description, constraints, suspected bug class, solve sketch):
 
 ```bash
-pwn-solver ./chall --notes "Heap UAF + FSOP; libc 2.39, Full RELRO"
+autopwn ./chall --notes "Heap UAF + FSOP; libc 2.39, Full RELRO"
 ```
 
 Long writeups:
 
 ```bash
-pwn-solver ./chall --notes-file ./challenge.txt
+autopwn ./chall --notes-file ./challenge.txt
 ```
 
 (`--notes-file` overrides `--notes` if both are passed.)

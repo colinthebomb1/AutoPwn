@@ -1,4 +1,4 @@
-"""System prompts and tool descriptions for the pwn-solver agent."""
+"""System prompts and tool descriptions for the AutoPwn agent."""
 
 from pathlib import Path
 

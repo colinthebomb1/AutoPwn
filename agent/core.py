@@ -283,7 +283,7 @@ class AgentResult:
     tool_calls: list[dict] = field(default_factory=list)
 
 
-class PwnAgent:
+class AutoPwnAgent:
     def __init__(
         self,
         model: str = "claude-sonnet-4-20250514",
@@ -333,7 +333,7 @@ class PwnAgent:
         console.print(
             Panel(
                 panel_lines,
-                title="pwn-solver",
+                title="AutoPwn",
                 border_style="blue",
             )
         )
