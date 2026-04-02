@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import random
 import re
 import subprocess
-import sys
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -227,41 +227,24 @@ def _save_last_attempt_exploit(binary_path: str, script: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Tool modules — loaded lazily from MCP server directories
+# Tool modules — loaded lazily from packaged MCP server modules
 # ---------------------------------------------------------------------------
 
 _exploit_mod = None
 _dynamic_mod = None
 
 
-def _load_server_module(name: str, server_dir: str):
-    """Load a server.py module from a specific directory without import cache collisions."""
-    import importlib.util
-
-    server_dir = os.path.abspath(server_dir)
-    server_path = os.path.join(server_dir, "server.py")
-    sys.path.insert(0, server_dir)
-    spec = importlib.util.spec_from_file_location(name, server_path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
 def _get_exploit_module():
     global _exploit_mod
     if _exploit_mod is None:
-        server_dir = os.path.join(os.path.dirname(__file__), "..", "mcp-servers", "exploit-tools")
-        _exploit_mod = _load_server_module("exploit_server", server_dir)
+        _exploit_mod = importlib.import_module("agent.mcp_servers.exploit_tools.server")
     return _exploit_mod
 
 
 def _get_dynamic_module():
     global _dynamic_mod
     if _dynamic_mod is None:
-        server_dir = os.path.join(
-            os.path.dirname(__file__), "..", "mcp-servers", "dynamic-analysis"
-        )
-        _dynamic_mod = _load_server_module("dynamic_server", server_dir)
+        _dynamic_mod = importlib.import_module("agent.mcp_servers.dynamic_analysis.server")
     return _dynamic_mod
 
 

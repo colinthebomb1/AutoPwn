@@ -45,7 +45,10 @@ testpaths = ["tests"]
 target-version = "py311"
 line-length = 100
 # Ghidra post-scripts are Jython inside Ghidra's VM (injected globals); not plain Python for Ruff.
-exclude = ["mcp-servers/exploit-tools/ghidra_scripts"]
+exclude = [
+    "mcp-servers/exploit-tools/ghidra_scripts",
+    "agent/mcp_servers/exploit_tools/ghidra_scripts",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]

@@ -1,25 +1,17 @@
-"""Load MCP server modules by file path — avoids `import server` cache collisions."""
+"""Load packaged MCP server modules used by the agent."""
 
 from __future__ import annotations
 
-import importlib.util
-import os
+import importlib
 
 
-def _load(name: str, *path_parts: str):
-    root = os.path.join(os.path.dirname(__file__), "..", "mcp-servers", *path_parts)
-    server_path = os.path.abspath(os.path.join(root, "server.py"))
-    spec = importlib.util.spec_from_file_location(name, server_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Cannot load MCP server from {server_path}")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+def _load(module_name: str):
+    return importlib.import_module(module_name)
 
 
 def load_exploit_tools():
-    return _load("pwn_solver_tests.exploit_tools", "exploit-tools")
+    return _load("agent.mcp_servers.exploit_tools.server")
 
 
 def load_dynamic_analysis():
-    return _load("pwn_solver_tests.dynamic_analysis", "dynamic-analysis")
+    return _load("agent.mcp_servers.dynamic_analysis.server")

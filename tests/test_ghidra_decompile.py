@@ -2,24 +2,11 @@
 
 from __future__ import annotations
 
-import importlib.util
 import os
 
 import pytest
 
-
-def _load_run_ghidra_decompile():
-    _root = os.path.join(os.path.dirname(__file__), "..", "mcp-servers", "exploit-tools")
-    path = os.path.abspath(os.path.join(_root, "ghidra_decompile.py"))
-    spec = importlib.util.spec_from_file_location("ghidra_decompile_test", path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Cannot load {path}")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod.run_ghidra_decompile
-
-
-run_ghidra_decompile = _load_run_ghidra_decompile()
+from agent.mcp_servers.exploit_tools.ghidra_decompile import run_ghidra_decompile
 
 
 def test_run_ghidra_decompile_empty_functions():
