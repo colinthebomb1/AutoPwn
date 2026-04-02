@@ -17,7 +17,7 @@ Agentic binary exploitation framework built around an LLM-driven ReAct loop, MCP
 ## Project Layout
 
 - `agent/` - ReAct loop, prompts, planner, CLI entrypoint
-- `mcp-servers/` - MCP tool servers (`exploit-tools`, `dynamic-analysis`)
+- `agent/mcp_servers/` - packaged MCP tool server implementations
 - `tests/` - unit/integration tests + challenge binaries/sources
 - `exploits/` - generated solve scripts and latest attempt mirrors
 
@@ -35,7 +35,7 @@ git clone https://github.com/colinthebomb1/pwn-solver.git
 cd pwn-solver
 python -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev,pwn]"
+pip install .
 ```
 
 ## Configuration
