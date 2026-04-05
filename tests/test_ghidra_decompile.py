@@ -86,6 +86,7 @@ def test_build_headless_cmd_uses_process_with_cached_project(tmp_path):
     )
     assert cache_hit is True
     assert "-process" in cmd
+    assert "-noanalysis" in cmd
     assert "sample.bin" in cmd
     assert "-import" not in cmd
 
