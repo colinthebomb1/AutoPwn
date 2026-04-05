@@ -7,6 +7,44 @@ import json
 import pytest
 
 
+def test_solve_bootstrap_calls_elf_symbols_with_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from agent.core import AutoPwnAgent
+
+    binary_path = tmp_path / "fake.bin"
+    binary_path.write_bytes(b"\x7fELF")
+
+    tool_calls: list[tuple[str, dict]] = []
+
+    def fake_call_tool(name: str, arguments: dict):
+        tool_calls.append((name, arguments))
+        if name == "checksec":
+            return {"pie": False, "runpath": None, "rpath": None}
+        if name == "elf_symbols":
+            return {"functions": {"main": "0x401000"}}
+        if name == "strings_search":
+            return []
+        return {"ok": True}
+
+    monkeypatch.setattr("agent.core._call_tool", fake_call_tool)
+    monkeypatch.setenv("PWN_AGENT_BOOTSTRAP_GHIDRA", "0")
+
+    agent = AutoPwnAgent(max_iterations=0, api_key="test")
+    result = agent.solve(str(binary_path))
+
+    assert result.success is False
+    assert ("checksec", {"binary_path": str(binary_path)}) in tool_calls
+    assert (
+        "elf_symbols",
+        {
+            "binary_path": str(binary_path),
+            "symbol_type": "functions",
+            "symbol_scope": "user",
+        },
+    ) in tool_calls
+
+
 def test_trim_conversation_keeps_bootstrap_and_recent_turns(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -72,3 +110,20 @@ def test_operator_notes_message_treats_constraints_as_binding() -> None:
     assert "binding for this run" in msg
     assert "If you need to violate a note" in msg
     assert "Do not use gdb_run" in msg
+
+
+def test_bootstrap_function_symbol_scope_prefers_user_for_static_binaries() -> None:
+    from agent.core import _bootstrap_function_symbol_scope
+
+    assert (
+        _bootstrap_function_symbol_scope({"pie": False, "runpath": None, "rpath": None})
+        == "user"
+    )
+    assert (
+        _bootstrap_function_symbol_scope({"pie": True, "runpath": None, "rpath": None})
+        == "all"
+    )
+    assert (
+        _bootstrap_function_symbol_scope({"pie": False, "runpath": "/tmp/lib", "rpath": None})
+        == "all"
+    )
