@@ -47,6 +47,51 @@ class TestGDBBreakpoint:
         assert isinstance(result["disassembly"], str)
         assert len(result["registers"]) > 0
 
+    def test_returns_early_after_run_timeout(self, monkeypatch):
+        from agent.mcp_servers.dynamic_analysis import server as gdb_server_mod
+
+        class FakeSession:
+            def __init__(self):
+                self.commands: list[str] = []
+                self.closed = False
+
+            def start(self, path):
+                self.commands.append(f"start:{path}")
+
+            def command(self, cmd, timeout=None):
+                self.commands.append(cmd)
+                return "unexpected follow-up command"
+
+            def run_with_stdin(self, stdin_data, timeout=None):
+                self.commands.append(f"run_with_stdin:{timeout}")
+                return "[TIMEOUT after 30s waiting for GDB prompt]"
+
+            def close(self):
+                self.closed = True
+
+        fake_session = FakeSession()
+
+        monkeypatch.setattr(gdb_server_mod, "_resolve_binary", lambda p: p)
+        monkeypatch.setattr(gdb_server_mod, "_get_session", lambda: fake_session)
+
+        result = gdb_server_mod.gdb_breakpoint(
+            "/tmp/fake",
+            address="main",
+            stdin_data="AAAA",
+        )
+
+        assert result["output"] == "[TIMEOUT after 30s waiting for GDB prompt]"
+        assert result["disassembly"] == "[TIMEOUT after 30s waiting for GDB prompt]"
+        assert result["stack_dump"] == "[TIMEOUT after 30s waiting for GDB prompt]"
+        assert result["registers"] == {}
+        assert result["command_results"] == {}
+        assert fake_session.closed is True
+        assert fake_session.commands == [
+            "start:/tmp/fake",
+            "break main",
+            "run_with_stdin:30",
+        ]
+
 
 class TestGDBStack:
     def test_dump_stack(self, ret2win_binary):

@@ -68,6 +68,13 @@ def _registers_fallback(session) -> dict[str, str]:
     return regs
 
 
+def _gdb_command_failed(output: str) -> bool:
+    """Detect session states where follow-up commands would only burn timeout budget."""
+    if not output:
+        return False
+    return output.startswith("[TIMEOUT") or output.startswith("[GDB process")
+
+
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
@@ -264,6 +271,16 @@ def gdb_breakpoint(
         output = session.run_with_stdin(stdin_data.encode("latin-1"), timeout=30)
     else:
         output = session.command("run", timeout=30)
+
+    if _gdb_command_failed(output):
+        session.close()
+        return {
+            "output": output,
+            "disassembly": output,
+            "registers": {},
+            "stack_dump": output,
+            "command_results": {},
+        }
 
     # Get registers at breakpoint
     reg_output = session.command("info registers")
