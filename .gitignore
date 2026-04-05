@@ -36,5 +36,6 @@ tests/challenges/heap_tcache_poison_x64
 # IDE
 .vscode/
 .idea/
+.codex
 
 .gdb_history
