@@ -43,7 +43,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
     "elf_symbols": {
-        "description": "List symbols from an ELF binary: functions, PLT, GOT, and sections.",
+        "description": "List symbols from an ELF binary: functions, PLT, GOT, and sections. On static binaries, prefer the default auto/user-focused scope unless you truly need runtime noise.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -52,6 +52,11 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
                     "type": "string",
                     "enum": ["all", "functions", "plt", "got"],
                     "description": "Type of symbols to list. Defaults to 'all'.",
+                },
+                "symbol_scope": {
+                    "type": "string",
+                    "enum": ["auto", "all", "user"],
+                    "description": "Function filtering scope. 'auto' defaults to 'user' on static binaries; use 'all' only when you explicitly need libc/runtime symbols.",
                 },
             },
             "required": ["binary_path"],
@@ -108,12 +113,25 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
     "strings_search": {
-        "description": "Extract printable strings from a binary.",
+        "description": "Extract printable strings from a binary. Defaults to a curated, capped result set to avoid noisy static-binary dumps.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "binary_path": {"type": "string", "description": "Path to the ELF binary"},
                 "min_length": {"type": "integer", "description": "Minimum string length. Default 4."},
+                "encoding": {
+                    "type": "string",
+                    "enum": ["ascii", "unicode"],
+                    "description": "String encoding. Defaults to 'ascii'.",
+                },
+                "interesting_only": {
+                    "type": "boolean",
+                    "description": "When true, filter out most low-signal assembly-ish fragments. Defaults to true.",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum number of strings to return after filtering. Default 200.",
+                },
             },
             "required": ["binary_path"],
         },

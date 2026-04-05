@@ -200,6 +200,16 @@ def _usage_to_dict(usage: Any) -> dict[str, int]:
     return out
 
 
+def _bootstrap_function_symbol_scope(checksec_res: Any) -> str:
+    """Prefer a smaller, user-focused function list for static binaries."""
+    if isinstance(checksec_res, dict) and checksec_res.get("pie") is False:
+        runpath = checksec_res.get("runpath")
+        rpath = checksec_res.get("rpath")
+        if not runpath and not rpath:
+            return "user"
+    return "all"
+
+
 def _usage_add(a: dict[str, int], b: dict[str, int]) -> dict[str, int]:
     out = dict(a)
     for k, v in b.items():
@@ -395,8 +405,14 @@ class AutoPwnAgent:
                     return None
 
             checksec_res = _safe_call("checksec", {"binary_path": binary_path})
+            function_symbol_scope = _bootstrap_function_symbol_scope(checksec_res)
             funcs_res = _safe_call(
-                "elf_symbols", {"binary_path": binary_path, "symbol_type": "functions"}
+                "elf_symbols",
+                {
+                    "binary_path": binary_path,
+                    "symbol_type": "functions",
+                    "symbol_scope": function_symbol_scope,
+                },
             )
             plt_res = _safe_call("elf_symbols", {"binary_path": binary_path, "symbol_type": "plt"})
             got_res = _safe_call("elf_symbols", {"binary_path": binary_path, "symbol_type": "got"})
@@ -503,6 +519,10 @@ class AutoPwnAgent:
                     "but if bootstrap provides those values, reuse them. "
                     "If bootstrap includes `ghidra_decompile` with ok=true, treat that pseudocode "
                     "as primary source for control flow before writing exploits. "
+                    "On static binaries, avoid broad "
+                    "`elf_symbols(symbol_type='all', symbol_scope='all')` unless you need "
+                    "runtime/libc/compiler symbols for a specific reason; prefer the default "
+                    "narrower symbol scope and curated `strings_search` output first. "
                     "Use gdb_find_offset to determine buffer overflow offsets precisely."
                 ),
             }
