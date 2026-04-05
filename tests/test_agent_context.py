@@ -64,3 +64,11 @@ def test_run_exploit_result_truncates_script_in_api_payload(
     assert len(data["script"]) < len(long_script)
     assert "truncated" in data["script"]
 
+
+def test_operator_notes_message_treats_constraints_as_binding() -> None:
+    from agent.core import _operator_notes_message
+
+    msg = _operator_notes_message("Do not use gdb_run. Focus on user-created functions.")
+    assert "binding for this run" in msg
+    assert "If you need to violate a note" in msg
+    assert "Do not use gdb_run" in msg

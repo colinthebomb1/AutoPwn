@@ -129,6 +129,18 @@ def _tool_result_str_for_api(tool_name: str, result: Any, suffix: str = "") -> s
     return body
 
 
+def _operator_notes_message(user_context: str) -> str:
+    """Render operator notes as binding constraints for the current run."""
+    return (
+        "The operator provided notes below. Treat explicit instructions and constraints "
+        "in them as binding for this run unless a tool result proves they are impossible "
+        "or incorrect. If you need to violate a note, say why and cite the conflicting "
+        "evidence first. Use the remaining note content as additional challenge context.\n\n"
+        "---\n\n"
+        f"{user_context}"
+    )
+
+
 def _run_exploit_failure_hint(result: Any) -> str:
     """Return concise recovery hints for common run_exploit failure modes."""
     if not isinstance(result, dict):
@@ -500,13 +512,7 @@ class AutoPwnAgent:
             messages.append(
                 {
                     "role": "user",
-                    "content": (
-                        "The operator provided **challenge context** below (CTF description, "
-                        "constraints, or a hypothesized solve path). Treat it as intent to "
-                        "prioritize and reconcile with the binary and tools — it may be wrong.\n\n"
-                        "---\n\n"
-                        f"{user_context}"
-                    ),
+                    "content": _operator_notes_message(user_context),
                 }
             )
 
