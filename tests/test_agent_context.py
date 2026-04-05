@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
+from click.testing import CliRunner
 
 
 def test_solve_bootstrap_calls_elf_symbols_with_name(
@@ -127,3 +129,125 @@ def test_bootstrap_function_symbol_scope_prefers_user_for_static_binaries() -> N
         _bootstrap_function_symbol_scope({"pie": False, "runpath": "/tmp/lib", "rpath": None})
         == "all"
     )
+
+
+def test_extract_known_facts_from_ghidra_decompile() -> None:
+    from agent.core import _extract_known_facts
+
+    result = {
+        "ok": True,
+        "functions": {
+            "main": {"c": "undefined8 main(void) { game(); syscall(); return 0; }"},
+            "game": {
+                "c": (
+                    "void game(void) { mallic(); freee(); monkey_see(); monkey_do(); "
+                    "monkey_swaperoo(); }"
+                )
+            },
+            "monkey_do": {
+                "c": (
+                    "void monkey_do(void) { char local_28 [24]; "
+                    "fgets(local_28,0x28,(FILE *)stdin); }"
+                )
+            },
+            "monkey_see": {
+                "c": (
+                    "void monkey_see(void) { __isoc99_scanf(x,&local_34); "
+                    'printf("\\nThat monkey holds this: 0x%016lx\\n\\n",alStack_28); }'
+                )
+            },
+        },
+    }
+
+    facts = _extract_known_facts("ghidra_decompile", {}, result)
+    assert any("raw syscall instruction" in fact for fact in facts)
+    assert any("menu dispatcher" in fact for fact in facts)
+    assert any("overflow primitive" in fact for fact in facts)
+    assert any("leak primitive" in fact for fact in facts)
+
+
+def test_extract_known_facts_from_run_exploit() -> None:
+    from agent.core import _extract_known_facts
+
+    facts = _extract_known_facts(
+        "run_exploit",
+        {},
+        {
+            "stdout": (
+                "That monkey holds this: 0x00007ffc12345678\n"
+                "*** stack smashing detected ***: terminated"
+            ),
+            "stderr": "",
+            "timed_out": True,
+        },
+    )
+    assert any("leaks stack-looking values" in fact for fact in facts)
+    assert any("stack canary protection" in fact for fact in facts)
+    assert any("I/O desync" in fact for fact in facts)
+
+
+def test_merge_known_facts_deduplicates_and_caps() -> None:
+    from agent.core import _merge_known_facts
+
+    merged = _merge_known_facts(
+        ["fact a", "fact b"],
+        ["fact b", "fact c", "fact d"],
+        max_facts=3,
+    )
+    assert merged == ["fact a", "fact b", "fact c"]
+
+
+def test_known_facts_message_renders_summary() -> None:
+    from agent.core import _known_facts_message
+
+    msg = _known_facts_message(["fact a", "fact b"])
+    assert "Known facts summary" in msg
+    assert "- fact a" in msg
+    assert "- fact b" in msg
+
+
+def test_display_known_facts_prints_panel(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent.core import AutoPwnAgent
+
+    printed = []
+    monkeypatch.setattr("agent.core.console.print", lambda *args, **kwargs: printed.append(args))
+
+    agent = AutoPwnAgent(max_iterations=0, api_key="test", verbose=True)
+    agent._display_known_facts(["fact a", "fact b"])
+
+    assert printed
+
+
+def test_cli_verbose_flag_wires_into_agent(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    from agent import cli
+
+    binary_path = tmp_path / "fake.bin"
+    binary_path.write_bytes(b"\x7fELF")
+
+    captured = {}
+
+    class FakeAgent:
+        def __init__(self, model, max_iterations, api_key, verbose):
+            captured["model"] = model
+            captured["max_iterations"] = max_iterations
+            captured["api_key"] = api_key
+            captured["verbose"] = verbose
+
+        def solve(self, binary_path, remote=None, user_context=None):
+            from agent.core import AgentResult
+
+            captured["binary_path"] = binary_path
+            captured["remote"] = remote
+            captured["user_context"] = user_context
+            return AgentResult(success=False, summary="x", iterations=0, tool_calls=[])
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr("agent.core.AutoPwnAgent", FakeAgent)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.main, [str(binary_path), "-v", "--notes", "hello"])
+
+    assert result.exit_code == 0
+    assert captured["verbose"] is True
+    assert captured["binary_path"] == os.path.abspath(str(binary_path))
+    assert captured["user_context"] == "hello"

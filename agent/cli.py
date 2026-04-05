@@ -36,6 +36,12 @@ console = Console()
     type=click.Path(exists=True, dir_okay=False, path_type=str),
     help="Read notes from a UTF-8 file (use for long writeups). Overrides --notes if both are set.",
 )
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Show verbose debugging output such as known-fact updates and token/cache analytics.",
+)
 def main(
     binary: str,
     remote: str | None,
@@ -43,6 +49,7 @@ def main(
     max_iterations: int | None,
     notes: str | None,
     notes_file: str | None,
+    verbose: bool,
 ) -> None:
     """AutoPwn — Agentic binary exploitation powered by LLMs and MCP tools."""
     load_dotenv()
@@ -64,7 +71,12 @@ def main(
     elif notes is not None:
         user_context = notes
 
-    agent = AutoPwnAgent(model=model, max_iterations=max_iterations, api_key=api_key)
+    agent = AutoPwnAgent(
+        model=model,
+        max_iterations=max_iterations,
+        api_key=api_key,
+        verbose=verbose,
+    )
     result = agent.solve(binary_path=binary, remote=remote, user_context=user_context)
 
     console.print()

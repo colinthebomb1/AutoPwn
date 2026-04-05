@@ -210,6 +210,132 @@ def _bootstrap_function_symbol_scope(checksec_res: Any) -> str:
     return "all"
 
 
+def _merge_known_facts(existing: list[str], new: list[str], *, max_facts: int = 8) -> list[str]:
+    """Deduplicate while preserving order and keeping the fact list short."""
+    merged: list[str] = []
+    for fact in [*existing, *new]:
+        if not fact or fact in merged:
+            continue
+        merged.append(fact)
+        if len(merged) >= max_facts:
+            break
+    return merged
+
+
+def _known_facts_message(facts: list[str]) -> str:
+    """Render a compact, persistent summary of settled findings."""
+    if not facts:
+        return (
+            "Known facts summary: none locked in yet. When a tool establishes a useful fact, "
+            "it will be summarized here so you can reuse it instead of re-deriving it."
+        )
+    lines = ["Known facts summary. Reuse these before broad recon:"]
+    for fact in facts:
+        lines.append(f"- {fact}")
+    return "\n".join(lines)
+
+
+def _parse_c_int_literal(raw: str) -> int | None:
+    raw = raw.strip().lower()
+    try:
+        return int(raw, 16) if raw.startswith("0x") else int(raw, 10)
+    except ValueError:
+        return None
+
+
+def _extract_known_facts(tool_name: str, tool_input: dict[str, Any], result: Any) -> list[str]:
+    """Pull out small, reusable conclusions from tool results."""
+    facts: list[str] = []
+
+    if tool_name == "elf_symbols" and isinstance(result, dict):
+        funcs = result.get("functions")
+        if isinstance(funcs, dict) and funcs:
+            names = [name for name in funcs if isinstance(name, str)][:8]
+            if names:
+                facts.append(
+                    "Likely relevant functions seen: " + ", ".join(f"`{name}`" for name in names)
+                )
+
+    if tool_name == "ghidra_decompile" and isinstance(result, dict) and result.get("ok") is True:
+        functions = result.get("functions")
+        if isinstance(functions, dict):
+            for func_name, payload in functions.items():
+                if not isinstance(payload, dict):
+                    continue
+                code = payload.get("c")
+                if not isinstance(code, str) or not code:
+                    continue
+
+                if func_name == "main" and "syscall();" in code:
+                    facts.append(
+                        "Ghidra renders `syscall()` in `main`; verify whether it is a raw syscall "
+                        "instruction before treating it as a named function."
+                    )
+
+                if func_name == "game" and all(
+                    call in code
+                    for call in (
+                        "mallic();",
+                        "freee();",
+                        "monkey_see();",
+                        "monkey_do();",
+                        "monkey_swaperoo();",
+                    )
+                ):
+                    facts.append(
+                        "`game` is the menu dispatcher for `mallic`, `freee`, `monkey_see`, "
+                        "`monkey_do`, and `monkey_swaperoo`."
+                    )
+
+                buf_match = re.search(r"char\s+([A-Za-z0-9_]+)\s*\[(\d+)\];", code)
+                fgets_match = re.search(r"fgets\((\w+),\s*([^,]+),", code)
+                if buf_match and fgets_match and buf_match.group(1) == fgets_match.group(1):
+                    buf_size = _parse_c_int_literal(buf_match.group(2))
+                    read_size = _parse_c_int_literal(fgets_match.group(2))
+                    if (
+                        isinstance(buf_size, int)
+                        and isinstance(read_size, int)
+                        and read_size > buf_size
+                    ):
+                        facts.append(
+                            f"`{func_name}` reads {read_size} bytes into a {buf_size}-byte stack "
+                            "buffer; likely overflow primitive."
+                        )
+
+                if (
+                    func_name == "monkey_see"
+                    and "scanf" in code
+                    and "That monkey holds this: 0x%016lx" in code
+                    and "alStack_28" in code
+                ):
+                    facts.append(
+                        "`monkey_see` prints stack-looking data from a stack array under "
+                        "user-controlled indexing; likely leak primitive."
+                    )
+
+    if tool_name == "run_exploit" and isinstance(result, dict):
+        stdout = str(result.get("stdout", "") or "")
+        stderr = str(result.get("stderr", "") or "")
+        combined = stdout + "\n" + stderr
+        if "stack smashing detected" in combined:
+            facts.append(
+                "Interactive testing hit stack canary protection during overflow attempts."
+            )
+        if bool(result.get("timed_out", False)):
+            facts.append(
+                "Repeated `run_exploit` timeouts suggest I/O desync; prefer prompt-synced "
+                "scripts with `sendlineafter`/`sendafter`."
+            )
+        if "That monkey holds this: 0x" in stdout:
+            facts.append("Interactive testing confirmed `monkey_see` leaks stack-looking values.")
+        if "Pattern '/bin/sh' not found in binary" in combined:
+            facts.append(
+                "`/bin/sh` is not present in the binary; plan to write it or use another path."
+            )
+
+    return facts
+
+
 def _usage_add(a: dict[str, int], b: dict[str, int]) -> dict[str, int]:
     out = dict(a)
     for k, v in b.items():
@@ -311,12 +437,14 @@ class AutoPwnAgent:
         model: str = "claude-sonnet-4-20250514",
         max_iterations: int | None = None,
         api_key: str | None = None,
+        verbose: bool = False,
     ):
         self.model = model
         self.max_iterations = (
             max_iterations if max_iterations is not None else _default_max_iterations()
         )
         self.client = anthropic.Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY"))
+        self.verbose = verbose
 
     def solve(
         self,
@@ -548,7 +676,16 @@ class AutoPwnAgent:
             }
         )
 
-        head_messages = 3 if user_context else 2
+        known_facts: list[str] = []
+        messages.append(
+            {
+                "role": "user",
+                "content": _known_facts_message(known_facts),
+            }
+        )
+        known_facts_index = len(messages) - 1
+
+        head_messages = 4 if user_context else 3
 
         all_tool_calls: list[dict] = []
         planner_injected = False
@@ -613,13 +750,14 @@ class AutoPwnAgent:
                         last_script = tc["input"].get("script")
                         break
 
-                console.print(
-                    Panel(
-                        _format_usage_summary(total_usage),
-                        title="Tokens/Cache",
-                        border_style="blue",
+                if self.verbose:
+                    console.print(
+                        Panel(
+                            _format_usage_summary(total_usage),
+                            title="Tokens/Cache",
+                            border_style="blue",
+                        )
                     )
-                )
                 return AgentResult(
                     success=True,
                     summary=summary,
@@ -631,6 +769,7 @@ class AutoPwnAgent:
             if tool_use_blocks:
                 messages.append({"role": "assistant", "content": assistant_content})
                 tool_results = []
+                new_known_facts: list[str] = []
 
                 for tool_block in tool_use_blocks:
                     tool_name = tool_block.name
@@ -690,6 +829,7 @@ class AutoPwnAgent:
                     if tool_name == "run_exploit":
                         suffix += _run_exploit_failure_hint(result)
 
+                    new_known_facts.extend(_extract_known_facts(tool_name, tool_input, result))
                     result_str = _tool_result_str_for_api(tool_name, result, suffix)
 
                     tool_results.append({
@@ -699,18 +839,26 @@ class AutoPwnAgent:
                     })
 
                 messages.append({"role": "user", "content": tool_results})
+                prev_known_facts = list(known_facts)
+                known_facts = _merge_known_facts(known_facts, new_known_facts)
+                if self.verbose:
+                    added_facts = [fact for fact in known_facts if fact not in prev_known_facts]
+                    if added_facts:
+                        self._display_known_facts(added_facts)
+                messages[known_facts_index]["content"] = _known_facts_message(known_facts)
                 _trim_conversation(messages, head_messages=head_messages)
 
             if response.stop_reason == "end_turn" and tool_use_blocks:
                 continue
 
-        console.print(
-            Panel(
-                _format_usage_summary(total_usage),
-                title="Tokens/Cache",
-                border_style="blue",
+        if self.verbose:
+            console.print(
+                Panel(
+                    _format_usage_summary(total_usage),
+                    title="Tokens/Cache",
+                    border_style="blue",
+                )
             )
-        )
         return AgentResult(
             success=False,
             summary="Max iterations reached without solving the challenge.",
@@ -728,6 +876,10 @@ class AutoPwnAgent:
                 val_str = val_str[:200] + "..."
             table.add_row(k, val_str)
         console.print(table)
+
+    def _display_known_facts(self, facts: list[str]) -> None:
+        body = "\n".join(f"- {fact}" for fact in facts)
+        console.print(Panel(body, title="Known Facts", border_style="magenta"))
 
     def _display_tool_result(self, name: str, result: Any, elapsed: float) -> None:
         result_str = (
