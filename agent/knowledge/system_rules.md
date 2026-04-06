@@ -7,9 +7,12 @@
 - When writing exploits, use pwntools idioms (ELF(), ROP(), p64(), etc.).
 - If an exploit fails, analyze WHY before retrying with changes.
 - Limit exploit attempts to 5 retries with meaningful changes between each.
-- ALWAYS use `gdb_find_offset` for buffer overflow offset instead of guessing.
+- Use `gdb_find_offset` for buffer overflow offsets when the program is a simple, single-shot input path. Do **not** force it onto menu-driven or multi-prompt binaries if a cyclic stdin blob will not reliably reach the vulnerable read.
 - For ROP, prefer `rop_gadgets(binary_path)` with no `search` first; do not spend multiple tool calls rediscovering common gadgets unless the default pack is missing something specific.
 - When `rop_write_string_and_call_payload` returns a working chain shape, trust its default writable address unless tool output gives a stronger named target.
+- If operator notes say not to use GDB without breakpoints, follow that strictly.
+- For `gdb_breakpoint`, the provided stdin must actually drive execution to that function or address. Do not set a breakpoint on one menu path and send input for a different menu option.
+- On interactive menu binaries, prefer prompt-synchronized `run_exploit` helpers over static stdin transcripts for both validation and exploitation.
 
 ## Success Criteria
 

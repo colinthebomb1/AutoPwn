@@ -2,8 +2,10 @@
 
 - **`sub rsp, IMM` in `vuln` is not your padding-to-canary length.** It is the **total** stack frame allocation. Distance from **buffer low address** to the **canary slot** comes from **`%rbp`**-relative addresses (or a `gdb_breakpoint` at `vuln`): e.g. canary at **`[rbp-0x8]`**, buffer at **`[rbp-0x50]`** → fill **`0x50 - 0x8 = 0x48` (72)** bytes, then 8-byte canary, 8-byte saved RBP, then ROP (**88** to RIP).
 - **`gdb_find_offset`** often ends at **`SIGABRT` / `__stack_chk_fail`** on canary builds — expected. Do **not** “solve” layout by guessing **80** or **96** from **`sub rsp`** alone without **rbp-relative** math.
+- **Menu-driven binaries:** treat **`gdb_find_offset`** as optional, not mandatory. If the target loops on a menu, mixes `scanf` / `getchar` / `fgets`, or requires multiple choices before the vulnerable read, a raw cyclic stdin blob may never reach the bug cleanly.
 - **Prompt sync:** If the program prints **`name?` followed by a newline**, use **`recvuntil(b'name?\\n')`**. **`recvuntil(b'name?')` alone** may never match (newline already in the buffer) → **EOFError**.
 - **Canary value:** In **one running process**, the leak `printf("canary…")` shows the same **`fs:0x28`** value **`vuln` uses**. Do **not** declare “different canaries” by comparing registers from **unrelated** GDB sessions (different runs / prompts / stale state).
+- **Breakpoint discipline:** `gdb_breakpoint` only helps if the supplied stdin truly reaches that function. For a menu target, first confirm the exact choice sequence from Ghidra / bootstrap context, then send that sequence. A breakpoint on `monkey_do` with stdin starting `1\\n...` is user-input mismatch, not a GDB hang.
 - For **PIE + canary ret2libc**, prefer **`ret2libc_stage1_payload` / `ret2libc_stage2_payload`** with correct **`offset`**, **`canary`**, **`canary_offset`**, and **`pie_base`** over hand-rolled padding guesses.
 
 ## Technique Playbooks
@@ -14,7 +16,7 @@ A "win" function exists that is never called. Overflow the buffer to overwrite t
 
 1. `checksec` (or bootstrap `checksec`) → confirm no canary, no PIE
 2. `elf_symbols` (or bootstrap `main`/`vuln` context) → find the win function address
-3. `gdb_find_offset` → get exact offset to return address
+3. `gdb_find_offset` → get exact offset to return address when the binary is a single-shot overflow target
 4. Build payload: `b'A' * offset + p64(win_addr)`
 5. On x86_64: if it crashes, add a `ret` gadget before win_addr for stack alignment
 
@@ -23,7 +25,7 @@ A "win" function exists that is never called. Overflow the buffer to overwrite t
 No win function, but `system()` is in PLT or libc. Build a ROP chain to call `system("/bin/sh")`.
 
 1. `checksec` (or bootstrap `checksec`) → confirm no canary, NX enabled (PIE optional).
-2. `gdb_find_offset` → exact RIP offset.
+2. `gdb_find_offset` → exact RIP offset when the vulnerable path is single-shot and easy to drive. Otherwise derive the layout from disassembly or a targeted breakpoint at the vulnerable function.
 3. If PIE is enabled:
    - Find a binary leak you can use for PIE base (often: `main is at %p` or similar).
    - Use `pie_base_from_leak` to compute `pie_base`.
@@ -53,7 +55,7 @@ No win function, but `system()` is in PLT or libc. Build a ROP chain to call `sy
 NX is disabled, so the stack is executable. The test binary is **Phoenix stack-five**-style (`gets` overflow on ~128-byte stack buffer) with a `%p` leak so it works with ASLR on.
 
 1. `checksec` → NX false / non-executable bit off; no PIE ideal for fixed gadgets if any
-2. `gdb_find_offset` → offset to saved return address (often **136** for 128-byte buffer on amd64)
+2. `gdb_find_offset` → offset to saved return address (often **136** for 128-byte buffer on amd64) when the shellcode target is a simple one-input crash path
 3. `shellcraft_generate` → paste **`exploit_lines`** (`asm(shellcraft.sh())`, etc.); use **`exploit_lines_hex`** only if needed (~48 bytes on amd64 for `sh`)
 4. **Payload layout (reliable):** `shellcode + pad to offset + p64(buf_addr)` — put shellcode at the **start** of the buffer and set RIP to **`buf_addr`** (the leaked `%p`), not `buf+k`. Use `NOP` (`\\x90`) only for padding bytes after the shellcode.
 5. Parse the leak from **`process()`** output, not from `gdb_run`.
@@ -118,6 +120,13 @@ When binaries mix `scanf("%d", ...)` for menu choices with raw `read()` for edit
 - For raw binary writes, prefer `sendafter(b"data: ", payload)` (not `sendline`) to avoid accidental
   newline/menu-token contamination.
 
+Menu-driven stack bugs need the same discipline:
+
+- Do **not** assume one blob like `b"4\\n" + cyclic(...)` will safely survive every intermediate parser. `scanf`, `getchar`, `fgets`, and `read` consume input differently.
+- First identify the vulnerable menu option and the exact prompt sequence from Ghidra / bootstrap context.
+- Then validate reachability with a small prompt-synced `run_exploit` script before attempting cyclic offsets or full ROP.
+- If operator notes warn that the target “hangs” under GDB, prefer `gdb_breakpoint` over free-running `gdb_run`, and only after you know the correct menu path.
+
 Tcache notes (glibc 2.35+ safe-linking):
 
 - Tcache bins are LIFO by size class; freed chunk user-data starts with `fd`.
@@ -142,6 +151,10 @@ symbol addresses from disassembly.
 
 Use **`gdb_run`**, **`gdb_breakpoint`**, **`gdb_stack`**, **`gdb_vmmap`**, **`gdb_examine`** for stack layout, mappings, and pointer checks. Prefer agent tools over ad-hoc shell when possible.
 
+- For interactive or menu-driven binaries, default to **`gdb_breakpoint`** over `gdb_run`.
+- Only use `gdb_find_offset` after you have shown that your input path truly reaches the vulnerable read.
+- If the process appears to "hang" under GDB, first suspect an input-path mismatch or prompt desync before blaming the debugger.
+
 ### Bootstrap usage
 
-If bootstrap context is present, reuse it for first-pass recon (mitigations, symbols, strings, and **Ghidra pseudocode** when included). Re-run tools only when you need additional detail or to validate assumptions. On static binaries, avoid full `elf_symbols` dumps unless you specifically need runtime/compiler symbols, and prefer the curated default output from `strings_search` before broadening it. Disable expensive startup Ghidra with `PWN_AGENT_BOOTSTRAP_GHIDRA=0` if the host is slow or Ghidra is unavailable.
+If bootstrap context is present, reuse it for first-pass recon (mitigations, symbols, strings, and **Ghidra pseudocode** when included). Re-run tools only when you need additional detail or to validate assumptions. On static binaries, avoid full `elf_symbols` dumps unless you specifically need runtime/compiler symbols, and prefer the curated default output from `strings_search` before broadening it. Treat broad `strings_search(interesting_only=false)` as a fallback, not an opening move, because libc noise can swamp user-code clues. Disable expensive startup Ghidra with `PWN_AGENT_BOOTSTRAP_GHIDRA=0` if the host is slow or Ghidra is unavailable.

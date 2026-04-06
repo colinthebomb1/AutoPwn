@@ -49,7 +49,7 @@ Use the agent’s **`checksec`** first; confirm with **`elf_symbols`** (PLT/GOT)
 
 ## Buffer overflow
 
-- **Offset:** cyclic pattern + crash → `cyclic_find` on faulting register / `gdb_find_offset` (agent tool).
+- **Offset:** cyclic pattern + crash → `cyclic_find` on faulting register / `gdb_find_offset` (agent tool) for simple one-input binaries. For menu-driven programs, first prove you can reach the vulnerable read reliably; otherwise derive offsets from disassembly or a targeted breakpoint.
 - **Alignment (x86_64):** before calls like `system`, stack often must be 16-byte aligned at `call` — sometimes an extra **`ret`** gadget fixes “movaps” / segfault-after-success issues.
 
 ## ret2libc / ROP patterns
