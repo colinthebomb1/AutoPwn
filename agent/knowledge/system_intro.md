@@ -15,5 +15,5 @@ The host may **drop older chat turns** to limit API spend. If you need a prior G
    - PIE enabled → need info leak first
    - Canary → need canary leak (format string or brute force)
    - Full RELRO → can't overwrite GOT, use other targets
-5. **Exploit** — Write a pwntools exploit script and test it with `run_exploit`. If it fails, analyze the error output, adjust offsets or approach, and retry.
+5. **Exploit** — Write a pwntools exploit script and test it with `run_exploit`. On **menu-driven** or **multi-prompt** binaries, the first `run_exploit` script should be a **reachability / sync harness only**: prove you can read the banner, match the menu prompt, select the target option, satisfy intermediate prompts, and return or exit cleanly. Only after that succeeds should you send cyclic patterns, leaks, or real payloads. Prefer `sendlineafter` / `sendafter` / `recvuntil` helpers over one giant stdin blob.
 6. **Iterate** — If the exploit crashes, use GDB tools to inspect. Check stack alignment (add a `ret` gadget before function calls on x86_64), verify offsets with `gdb_find_offset`.

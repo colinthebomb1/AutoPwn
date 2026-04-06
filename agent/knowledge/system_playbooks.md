@@ -109,6 +109,33 @@ def edit(i,d):p.sendlineafter(b'> ', b'3'); p.sendlineafter(b'index', str(i).enc
 def show(i):  p.sendlineafter(b'> ', b'4'); p.sendlineafter(b'index', str(i).encode()); return p.recvuntil(b'\\n1)', drop=False)
 ```
 
+For any menu-driven target, start with a tiny harness before exploit logic:
+
+```python
+p = process(binary_path)
+p.recvuntil(b'>> ')
+
+def choose(n):
+    p.sendlineafter(b'>> ', str(n).encode())
+
+def choose_and_send(n, prompt, data, *, line=True):
+    choose(n)
+    if line:
+        p.sendlineafter(prompt, data)
+    else:
+        p.sendafter(prompt, data)
+```
+
+Use the **first** `run_exploit` attempt only to prove:
+
+- the banner is parsed correctly
+- the menu prompt is matched correctly
+- the intended option is reachable
+- the subordinate prompt text is correct
+- the program returns to the menu or exits as expected
+
+Do **not** mix this first harness with cyclic patterns, brute-force loops, or a full ROP chain.
+
 When binaries mix `scanf("%d", ...)` for menu choices with raw `read()` for edit/write:
 
 - Do **not** validate full exploit flows via one giant static stdin transcript (`gdb_run` input blob).
@@ -117,6 +144,12 @@ When binaries mix `scanf("%d", ...)` for menu choices with raw `read()` for edit
   to menu prompt after each action.
 - For raw binary writes, prefer `sendafter(b"data: ", payload)` (not `sendline`) to avoid accidental
   newline/menu-token contamination.
+
+The same rule applies to menu-driven stack overflows:
+
+- First prove you can reach the vulnerable function with a minimal harness script.
+- Then prove you can send benign input through that path without hanging.
+- Only then attempt `gdb_find_offset`, leak scripts, or full payloads.
 
 Tcache notes (glibc 2.35+ safe-linking):
 
