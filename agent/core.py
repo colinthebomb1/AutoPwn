@@ -211,14 +211,14 @@ def _bootstrap_function_symbol_scope(checksec_res: Any) -> str:
 
 
 def _merge_known_facts(existing: list[str], new: list[str], *, max_facts: int = 8) -> list[str]:
-    """Deduplicate while preserving order and keeping the fact list short."""
+    """Deduplicate while preserving recency and keeping the fact list short."""
     merged: list[str] = []
     for fact in [*existing, *new]:
         if not fact or fact in merged:
             continue
         merged.append(fact)
-        if len(merged) >= max_facts:
-            break
+    if len(merged) > max_facts:
+        merged = merged[-max_facts:]
     return merged
 
 
@@ -235,110 +235,35 @@ def _known_facts_message(facts: list[str]) -> str:
     return "\n".join(lines)
 
 
-def _parse_c_int_literal(raw: str) -> int | None:
-    raw = raw.strip().lower()
-    try:
-        return int(raw, 16) if raw.startswith("0x") else int(raw, 10)
-    except ValueError:
-        return None
+_KNOWN_FACTS_BLOCK_RE = re.compile(
+    r"<known_facts>\s*(?P<body>.*?)\s*</known_facts>",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
-def _extract_called_functions(code: str) -> list[str]:
-    names = re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*\);", code)
-    seen: list[str] = []
-    for name in names:
-        if name not in seen:
-            seen.append(name)
-    return seen
+def _normalize_known_fact(raw: str) -> str:
+    fact = re.sub(r"\s+", " ", str(raw or "")).strip()
+    fact = re.sub(r"^[-*]\s*", "", fact)
+    if len(fact) > 240:
+        fact = fact[:237].rstrip() + "..."
+    return fact
 
 
-def _extract_known_facts(tool_name: str, tool_input: dict[str, Any], result: Any) -> list[str]:
-    """Pull out small, reusable conclusions from tool results."""
+def _extract_known_facts_block(text: str) -> tuple[str, list[str] | None]:
+    """Strip an optional known-facts block from assistant text and parse its facts."""
+    match = _KNOWN_FACTS_BLOCK_RE.search(text)
+    if not match:
+        return text, None
+
+    body = match.group("body")
     facts: list[str] = []
+    for line in body.splitlines():
+        fact = _normalize_known_fact(line)
+        if fact and fact not in facts:
+            facts.append(fact)
 
-    if tool_name == "elf_symbols" and isinstance(result, dict):
-        funcs = result.get("functions")
-        if isinstance(funcs, dict) and funcs:
-            names = [name for name in funcs if isinstance(name, str)][:8]
-            if names:
-                facts.append(
-                    "Likely relevant functions seen: " + ", ".join(f"`{name}`" for name in names)
-                )
-
-    if tool_name == "ghidra_decompile" and isinstance(result, dict) and result.get("ok") is True:
-        functions = result.get("functions")
-        if isinstance(functions, dict):
-            for func_name, payload in functions.items():
-                if not isinstance(payload, dict):
-                    continue
-                code = payload.get("c")
-                if not isinstance(code, str) or not code:
-                    continue
-
-                if func_name == "main" and "syscall();" in code:
-                    facts.append(
-                        "Ghidra renders `syscall()` in `main`; verify whether it is a raw syscall "
-                        "instruction before treating it as a named function."
-                    )
-
-                called_functions = _extract_called_functions(code)
-                if (
-                    "switch(" in code
-                    and len(called_functions) >= 3
-                    and ("case " in code or "default:" in code)
-                ):
-                    facts.append(
-                        f"`{func_name}` appears to dispatch control flow across: "
-                        + ", ".join(f"`{name}`" for name in called_functions[:5])
-                        + "."
-                    )
-
-                buf_match = re.search(r"char\s+([A-Za-z0-9_]+)\s*\[(\d+)\];", code)
-                fgets_match = re.search(r"fgets\((\w+),\s*([^,]+),", code)
-                if buf_match and fgets_match and buf_match.group(1) == fgets_match.group(1):
-                    buf_size = _parse_c_int_literal(buf_match.group(2))
-                    read_size = _parse_c_int_literal(fgets_match.group(2))
-                    if (
-                        isinstance(buf_size, int)
-                        and isinstance(read_size, int)
-                        and read_size > buf_size
-                    ):
-                        facts.append(
-                            f"`{func_name}` reads {read_size} bytes into a {buf_size}-byte stack "
-                            "buffer; likely overflow primitive."
-                        )
-
-                if (
-                    ("scanf" in code or "fgets" in code or "read(" in code)
-                    and "0x%016l" in code
-                    and ("alStack_" in code or "local_" in code)
-                ):
-                    facts.append(
-                        f"`{func_name}` prints stack-looking data from local storage under "
-                        "user-driven input; likely leak primitive."
-                    )
-
-    if tool_name == "run_exploit" and isinstance(result, dict):
-        stdout = str(result.get("stdout", "") or "")
-        stderr = str(result.get("stderr", "") or "")
-        combined = stdout + "\n" + stderr
-        if "stack smashing detected" in combined:
-            facts.append(
-                "Interactive testing hit stack canary protection during overflow attempts."
-            )
-        if bool(result.get("timed_out", False)):
-            facts.append(
-                "Repeated `run_exploit` timeouts suggest I/O desync; prefer prompt-synced "
-                "scripts with `sendlineafter`/`sendafter`."
-            )
-        if "That monkey holds this: 0x" in stdout:
-            facts.append("Interactive testing confirmed a menu path leaks stack-looking values.")
-        if "Pattern '/bin/sh' not found in binary" in combined:
-            facts.append(
-                "`/bin/sh` is not present in the binary; plan to write it or use another path."
-            )
-
-    return facts
+    cleaned = (text[: match.start()] + text[match.end() :]).strip()
+    return cleaned, facts
 
 
 def _usage_add(a: dict[str, int], b: dict[str, int]) -> dict[str, int]:
@@ -652,6 +577,10 @@ class AutoPwnAgent:
                     "but if bootstrap provides those values, reuse them. "
                     "If bootstrap includes `ghidra_decompile` with ok=true, treat that pseudocode "
                     "as primary source for control flow before writing exploits. "
+                    "If you want to refresh the known-facts summary, include a "
+                    "<known_facts>...</known_facts> block in your normal reply with one "
+                    "bullet-style fact per line. Only include settled, reusable facts; omit the "
+                    "block when nothing needs updating. "
                     "On static binaries, avoid broad "
                     "`elf_symbols(symbol_type='all', symbol_scope='all')` unless you need "
                     "runtime/libc/compiler symbols for a specific reason; prefer the default "
@@ -738,8 +667,25 @@ class AutoPwnAgent:
 
             for block in assistant_content:
                 if block.type == "text":
-                    clean = _sanitize_agent_text(block.text)
-                    console.print(Panel(clean, title="Agent", border_style="green"))
+                    clean, proposed_known_facts = _extract_known_facts_block(block.text)
+                    clean = _sanitize_agent_text(clean)
+                    if proposed_known_facts is not None:
+                        prev_known_facts = list(known_facts)
+                        known_facts = proposed_known_facts[:]
+                        messages[known_facts_index]["content"] = _known_facts_message(known_facts)
+                        if self.verbose:
+                            added_facts = [fact for fact in known_facts if fact not in prev_known_facts]
+                            removed_facts = [
+                                fact for fact in prev_known_facts if fact not in known_facts
+                            ]
+                            if added_facts:
+                                self._display_known_facts(added_facts)
+                            if removed_facts:
+                                self._display_known_facts(
+                                    [f"Removed: {fact}" for fact in removed_facts]
+                                )
+                    if clean.strip():
+                        console.print(Panel(clean, title="Agent", border_style="green"))
                 elif block.type == "tool_use":
                     tool_use_blocks.append(block)
 
@@ -774,7 +720,6 @@ class AutoPwnAgent:
             if tool_use_blocks:
                 messages.append({"role": "assistant", "content": assistant_content})
                 tool_results = []
-                new_known_facts: list[str] = []
 
                 for tool_block in tool_use_blocks:
                     tool_name = tool_block.name
@@ -834,7 +779,6 @@ class AutoPwnAgent:
                     if tool_name == "run_exploit":
                         suffix += _run_exploit_failure_hint(result)
 
-                    new_known_facts.extend(_extract_known_facts(tool_name, tool_input, result))
                     result_str = _tool_result_str_for_api(tool_name, result, suffix)
 
                     tool_results.append({
@@ -844,13 +788,6 @@ class AutoPwnAgent:
                     })
 
                 messages.append({"role": "user", "content": tool_results})
-                prev_known_facts = list(known_facts)
-                known_facts = _merge_known_facts(known_facts, new_known_facts)
-                if self.verbose:
-                    added_facts = [fact for fact in known_facts if fact not in prev_known_facts]
-                    if added_facts:
-                        self._display_known_facts(added_facts)
-                messages[known_facts_index]["content"] = _known_facts_message(known_facts)
                 _trim_conversation(messages, head_messages=head_messages)
 
             if response.stop_reason == "end_turn" and tool_use_blocks:

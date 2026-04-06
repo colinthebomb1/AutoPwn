@@ -131,61 +131,25 @@ def test_bootstrap_function_symbol_scope_prefers_user_for_static_binaries() -> N
     )
 
 
-def test_extract_known_facts_from_ghidra_decompile() -> None:
-    from agent.core import _extract_known_facts
+def test_extract_known_facts_block_parses_and_strips_markup() -> None:
+    from agent.core import _extract_known_facts_block
 
-    result = {
-        "ok": True,
-        "functions": {
-            "main": {"c": "undefined8 main(void) { game(); syscall(); return 0; }"},
-            "game": {
-                "c": (
-                    "void game(void) { switch(local_14) { case 1: mallic(); break; "
-                    "case 2: freee(); break; case 3: monkey_see(); break; "
-                    "case 4: monkey_do(); break; default: "
-                    "monkey_swaperoo(); break; } }"
-                )
-            },
-            "monkey_do": {
-                "c": (
-                    "void monkey_do(void) { char local_28 [24]; "
-                    "fgets(local_28,0x28,(FILE *)stdin); }"
-                )
-            },
-            "monkey_see": {
-                "c": (
-                    "void monkey_see(void) { __isoc99_scanf(x,&local_34); "
-                    'printf("\\nThat monkey holds this: 0x%016lx\\n\\n",alStack_28); }'
-                )
-            },
-        },
-    }
-
-    facts = _extract_known_facts("ghidra_decompile", {}, result)
-    assert any("raw syscall instruction" in fact for fact in facts)
-    assert any("dispatch control flow" in fact for fact in facts)
-    assert any("overflow primitive" in fact for fact in facts)
-    assert any("leak primitive" in fact for fact in facts)
-
-
-def test_extract_known_facts_from_run_exploit() -> None:
-    from agent.core import _extract_known_facts
-
-    facts = _extract_known_facts(
-        "run_exploit",
-        {},
-        {
-            "stdout": (
-                "That monkey holds this: 0x00007ffc12345678\n"
-                "*** stack smashing detected ***: terminated"
-            ),
-            "stderr": "",
-            "timed_out": True,
-        },
+    text, facts = _extract_known_facts_block(
+        "We have enough to continue.\n<known_facts>\n- Canary abort observed\n- PIE is off\n</known_facts>\nNext step: inspect win."
     )
-    assert any("leaks stack-looking values" in fact for fact in facts)
-    assert any("stack canary protection" in fact for fact in facts)
-    assert any("I/O desync" in fact for fact in facts)
+
+    assert "known_facts" not in text
+    assert "Next step" in text
+    assert facts == ["Canary abort observed", "PIE is off"]
+
+
+def test_extract_known_facts_block_returns_none_when_absent() -> None:
+    from agent.core import _extract_known_facts_block
+
+    text, facts = _extract_known_facts_block("No memory update in this reply.")
+
+    assert text == "No memory update in this reply."
+    assert facts is None
 
 
 def test_merge_known_facts_deduplicates_and_caps() -> None:
@@ -196,7 +160,7 @@ def test_merge_known_facts_deduplicates_and_caps() -> None:
         ["fact b", "fact c", "fact d"],
         max_facts=3,
     )
-    assert merged == ["fact a", "fact b", "fact c"]
+    assert merged == ["fact b", "fact c", "fact d"]
 
 
 def test_known_facts_message_renders_summary() -> None:
