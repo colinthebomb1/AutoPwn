@@ -91,18 +91,39 @@ def test_trim_conversation_three_head_messages(monkeypatch: pytest.MonkeyPatch) 
     assert messages[-1]["content"] == "u7"
 
 
-def test_run_exploit_result_truncates_script_in_api_payload(
+def test_trim_conversation_respects_char_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent.core import _trim_conversation
+
+    monkeypatch.setenv("PWN_AGENT_CONTEXT_TURNS", "8")
+    monkeypatch.setenv("PWN_AGENT_CONTEXT_MAX_CHARS", "120")
+    messages: list[dict] = [
+        {"role": "user", "content": "task"},
+        {"role": "user", "content": "bootstrap"},
+    ]
+    for i in range(4):
+        messages.append({"role": "assistant", "content": f"a{i}-" + ("x" * 40)})
+        messages.append({"role": "user", "content": f"u{i}-" + ("y" * 40)})
+
+    _trim_conversation(messages)
+
+    assert messages[0]["content"] == "task"
+    assert messages[1]["content"] == "bootstrap"
+    assert len(messages) < 10
+    assert messages[-2]["content"].startswith("a3-")
+    assert messages[-1]["content"].startswith("u3-")
+
+
+def test_run_exploit_result_strips_script_from_api_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from agent.core import _tool_result_str_for_api
 
-    monkeypatch.setenv("PWN_AGENT_RUN_EXPLOIT_SCRIPT_SNIP", "20")
     long_script = "x" * 100
     result = {"exit_code": 1, "script": long_script, "stdout": "ok"}
     s = _tool_result_str_for_api("run_exploit", result)
     data = json.loads(s)
-    assert len(data["script"]) < len(long_script)
-    assert "truncated" in data["script"]
+    assert "script" not in data
+    assert data["stdout"] == "ok"
 
 
 def test_operator_notes_message_treats_constraints_as_binding() -> None:
@@ -177,6 +198,28 @@ def test_known_facts_message_renders_summary() -> None:
     assert "- fact b" in msg
 
 
+def test_sync_known_facts_message_inserts_updates_and_removes() -> None:
+    from agent.core import _sync_known_facts_message
+
+    messages = [
+        {"role": "user", "content": "task"},
+        {"role": "user", "content": "bootstrap"},
+        {"role": "assistant", "content": "reply"},
+    ]
+
+    idx = _sync_known_facts_message(messages, ["fact a"], insert_at=2, known_facts_index=None)
+    assert idx == 2
+    assert messages[2]["content"].startswith("Known facts summary")
+
+    idx = _sync_known_facts_message(messages, ["fact b"], insert_at=2, known_facts_index=idx)
+    assert idx == 2
+    assert "- fact b" in messages[2]["content"]
+
+    idx = _sync_known_facts_message(messages, [], insert_at=2, known_facts_index=idx)
+    assert idx is None
+    assert all("Known facts summary" not in m["content"] for m in messages)
+
+
 def test_display_known_facts_prints_panel(monkeypatch: pytest.MonkeyPatch) -> None:
     from agent.core import AutoPwnAgent
 
@@ -187,6 +230,16 @@ def test_display_known_facts_prints_panel(monkeypatch: pytest.MonkeyPatch) -> No
     agent._display_known_facts(["fact a", "fact b"])
 
     assert printed
+
+
+def test_get_system_prompt_uses_consolidated_files() -> None:
+    from agent.prompts import get_system_prompt
+
+    prompt = get_system_prompt()
+
+    assert "You are AutoPwn, an expert binary exploitation agent." in prompt
+    assert "## Technique Playbooks" in prompt
+    assert "Pwn knowledge base (operator notes)" not in prompt
 
 
 def test_cli_verbose_flag_wires_into_agent(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:

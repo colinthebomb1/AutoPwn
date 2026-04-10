@@ -87,6 +87,28 @@ def _default_max_iterations() -> int:
     return 30
 
 
+def _message_content_text(content: Any) -> str:
+    """Flatten a message content payload into plain text for rough size estimation."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                for key in ("text", "content"):
+                    value = item.get(key)
+                    if isinstance(value, str):
+                        parts.append(value)
+        return "\n".join(parts)
+    return str(content)
+
+
+def _estimated_message_chars(message: dict[str, Any]) -> int:
+    return len(_message_content_text(message.get("content", "")))
+
+
 # First N messages are fixed (task + bootstrap). Older turns are dropped to cap input tokens.
 def _trim_conversation(messages: list[dict], *, head_messages: int = 2) -> None:
     """Keep opening messages plus the last few assistant↔user rounds (in-place).
@@ -95,30 +117,36 @@ def _trim_conversation(messages: list[dict], *, head_messages: int = 2) -> None:
     context (CTF notes) was inserted between them.
     """
     turns = max(1, _env_int("PWN_AGENT_CONTEXT_TURNS", 8))
+    max_chars = max(1, _env_int("PWN_AGENT_CONTEXT_MAX_CHARS", 18000))
     max_tail = turns * 2  # each turn: assistant, then user(tool results)
-    if len(messages) <= head_messages + max_tail:
+    head = messages[:head_messages]
+    tail = messages[head_messages:]
+    if len(messages) <= head_messages + max_tail and (
+        sum(_estimated_message_chars(m) for m in messages) <= max_chars
+    ):
         return
-    messages[:] = messages[:head_messages] + messages[-max_tail:]
+    kept_tail = tail[-max_tail:]
+    while kept_tail and (
+        sum(_estimated_message_chars(m) for m in head)
+        + sum(_estimated_message_chars(m) for m in kept_tail)
+        > max_chars
+    ):
+        del kept_tail[:2]
+    messages[:] = head + kept_tail
 
 
-def _shallow_copy_trunc_run_exploit_script(result: Any) -> Any:
-    """Shrink run_exploit tool_result JSON: full script is mirrored on disk already."""
+def _shallow_copy_strip_run_exploit_script(result: Any) -> Any:
+    """Drop echoed exploit source from API context; the full script is mirrored on disk."""
     if not isinstance(result, dict):
         return result
     out = dict(result)
-    sc = out.get("script")
-    lim = _env_int("PWN_AGENT_RUN_EXPLOIT_SCRIPT_SNIP", 1600)
-    if isinstance(sc, str) and len(sc) > lim:
-        out["script"] = (
-            sc[:lim]
-            + "\n# ... truncated for API context; full file: exploits/last_attempt_<binary>.py"
-        )
+    out.pop("script", None)
     return out
 
 
 def _tool_result_str_for_api(tool_name: str, result: Any, suffix: str = "") -> str:
     payload = (
-        _shallow_copy_trunc_run_exploit_script(result)
+        _shallow_copy_strip_run_exploit_script(result)
         if tool_name == "run_exploit"
         else result
     )
@@ -224,15 +252,32 @@ def _merge_known_facts(existing: list[str], new: list[str], *, max_facts: int = 
 
 def _known_facts_message(facts: list[str]) -> str:
     """Render a compact, persistent summary of settled findings."""
-    if not facts:
-        return (
-            "Known facts summary: none locked in yet. When a tool establishes a useful fact, "
-            "it will be summarized here so you can reuse it instead of re-deriving it."
-        )
     lines = ["Known facts summary. Reuse these before broad recon:"]
     for fact in facts:
         lines.append(f"- {fact}")
     return "\n".join(lines)
+
+
+def _sync_known_facts_message(
+    messages: list[dict[str, Any]],
+    facts: list[str],
+    *,
+    insert_at: int,
+    known_facts_index: int | None,
+) -> int | None:
+    """Insert, update, or remove the known-facts summary message."""
+    if not facts:
+        if known_facts_index is not None:
+            del messages[known_facts_index]
+        return None
+
+    content = _known_facts_message(facts)
+    if known_facts_index is None:
+        messages.insert(insert_at, {"role": "user", "content": content})
+        return insert_at
+
+    messages[known_facts_index]["content"] = content
+    return known_facts_index
 
 
 _KNOWN_FACTS_BLOCK_RE = re.compile(
@@ -561,7 +606,7 @@ class AutoPwnAgent:
                 cap = _env_int("PWN_AGENT_BOOTSTRAP_MAX_CHARS_WITH_GHIDRA", 12000)
             else:
                 cap = _env_int("PWN_AGENT_BOOTSTRAP_MAX_CHARS", 2500)
-            dumped = json.dumps(bootstrap, indent=2, default=str)
+            dumped = json.dumps(bootstrap, separators=(",", ":"), default=str)
             if len(dumped) > cap:
                 dumped = dumped[:cap] + "\n... [bootstrap truncated]"
             return dumped
@@ -611,15 +656,9 @@ class AutoPwnAgent:
         )
 
         known_facts: list[str] = []
-        messages.append(
-            {
-                "role": "user",
-                "content": _known_facts_message(known_facts),
-            }
-        )
-        known_facts_index = len(messages) - 1
-
-        head_messages = 4 if user_context else 3
+        known_facts_insert_at = len(messages)
+        known_facts_index: int | None = None
+        base_head_messages = 3 if user_context else 2
 
         all_tool_calls: list[dict] = []
         planner_injected = False
@@ -672,7 +711,12 @@ class AutoPwnAgent:
                     if proposed_known_facts is not None:
                         prev_known_facts = list(known_facts)
                         known_facts = proposed_known_facts[:]
-                        messages[known_facts_index]["content"] = _known_facts_message(known_facts)
+                        known_facts_index = _sync_known_facts_message(
+                            messages,
+                            known_facts,
+                            insert_at=known_facts_insert_at,
+                            known_facts_index=known_facts_index,
+                        )
                         if self.verbose:
                             added_facts = [
                                 fact for fact in known_facts if fact not in prev_known_facts
@@ -790,7 +834,10 @@ class AutoPwnAgent:
                     })
 
                 messages.append({"role": "user", "content": tool_results})
-                _trim_conversation(messages, head_messages=head_messages)
+                current_head_messages = base_head_messages + (
+                    1 if known_facts_index is not None else 0
+                )
+                _trim_conversation(messages, head_messages=current_head_messages)
 
             if response.stop_reason == "end_turn" and tool_use_blocks:
                 continue

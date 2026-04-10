@@ -34,7 +34,7 @@ TOOL_MODULE_MAP: dict[str, str] = {
 TOOL_REGISTRY: dict[str, dict[str, Any]] = {
     # --- Exploit tools ---
     "checksec": {
-        "description": "Run checksec on a binary to identify security mitigations (RELRO, Canary, NX, PIE). Call this FIRST.",
+        "description": "Identify mitigations (RELRO, Canary, NX, PIE) for a binary.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -44,7 +44,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
     "elf_symbols": {
-        "description": "List symbols from an ELF binary: functions, PLT, GOT, named objects/globals, and sections. On static binaries, prefer the default auto/user-focused scope unless you truly need runtime noise.",
+        "description": "List ELF functions, PLT/GOT entries, or named objects. Prefer narrower scope on static binaries.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -64,7 +64,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
     "elf_search": {
-        "description": "Search for a byte pattern in an ELF binary and return virtual addresses. Essential for finding '/bin/sh' addresses for ROP chains.",
+        "description": "Search an ELF for a string or hex byte pattern and return virtual addresses.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -83,7 +83,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
     "rop_gadgets": {
-        "description": "Search for ROP gadgets in a binary. With no `search`, returns a curated common gadget pack first so you usually do not need multiple narrow gadget calls.",
+        "description": "Find ROP gadgets in a binary. With no `search`, returns a curated common gadget set.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -98,7 +98,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
     "cyclic_pattern": {
-        "description": "Generate or query a De Bruijn cyclic pattern for finding buffer overflow offsets.",
+        "description": "Generate or query a cyclic pattern for offset discovery.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -114,7 +114,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
     "strings_search": {
-        "description": "Extract printable strings from a binary. Defaults to a curated, capped result set to avoid noisy static-binary dumps.",
+        "description": "Extract printable strings from a binary with curated filtering by default.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -138,10 +138,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
     "shellcraft_generate": {
-        "description": (
-            "Generate shellcode via pwntools shellcraft. Prefer exploit_lines (asm(shellcraft...)); "
-            "use exploit_lines_hex if the transcript mangles shellcraft."
-        ),
+        "description": "Generate pwntools shellcraft snippets or shellcode payload bytes.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -160,7 +157,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
     "libc_symbols": {
-        "description": "Resolve useful libc symbol offsets and /bin/sh offset from a libc .so file.",
+        "description": "Resolve useful libc symbol offsets, including `/bin/sh` when present.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -175,7 +172,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
     "libc_base_from_leak": {
-        "description": "Compute libc base from one leaked symbol address and return resolved runtime addresses (system, /bin/sh).",
+        "description": "Compute libc base from one leaked symbol and resolve key runtime addresses.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -187,7 +184,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
     "pie_base_from_leak": {
-        "description": "Compute PIE base from one leaked symbol address (pie_base = leak - elf.symbols[symbol]).",
+        "description": "Compute PIE base from one leaked binary symbol address.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -199,7 +196,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
     "ret2libc_stage1_payload": {
-        "description": "Build stage-1 payload: leak GOT via puts@plt and return to main/vuln for a second stage.",
+        "description": "Build a stage-1 ret2libc payload that leaks a GOT entry and returns for stage 2.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -216,7 +213,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
     "ret2libc_stage2_payload": {
-        "description": "Build stage-2 payload: compute libc base from leak and call system('/bin/sh').",
+        "description": "Build a stage-2 ret2libc payload that calls `system('/bin/sh')`.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -234,12 +231,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
     "rop_write_string_and_call_payload": {
-        "description": (
-            "Build a ROP payload that first writes attacker-controlled bytes into writable memory "
-            "with gets/read, then calls a function like system() on that address. Useful when "
-            "the binary has system@plt but no '/bin/sh' string in memory. Trust the helper's "
-            "default writable address unless you have evidence that a different target is safer."
-        ),
+        "description": "Build a ROP payload that writes attacker-controlled bytes, then calls a target function on them.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -282,13 +274,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
     "ghidra_decompile": {
-        "description": (
-            "Decompile specific functions to Ghidra pseudocode (C-like) via local headless Ghidra. "
-            "The agent bootstrap often runs this already for a bounded set of symbols — check "
-            "bootstrap `ghidra_decompile` before repeating. Use for extra functions or after "
-            "bootstrap truncation. Requires GHIDRA_HOME (or PWN_GHIDRA_HOME) and Java. "
-            "Pass symbol names (e.g. main, vuln, handler_fn)."
-        ),
+        "description": "Decompile named functions to Ghidra pseudocode using local headless Ghidra.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -315,11 +301,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
     "format_string_payload": {
-        "description": (
-            "Generate a format string write payload (pwntools fmtstr_payload). "
-            "Prefer exploit_lines (readable fmtstr_payload call). Use exploit_lines_hex / payload_hex "
-            "only if the model corrupts specifiers — never hand-edit %N$ or addresses."
-        ),
+        "description": "Generate a pwntools `fmtstr_payload` write payload for a chosen offset and writes map.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -350,12 +332,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
     "run_exploit": {
-        "description": (
-            "Execute a pwntools exploit script; returns stdout/stderr/exit_code plus "
-            "shell_detected (uid= seen), flag_detected / flags_found (CTF PREFIX{...} pattern). "
-            "If shell_detected or flag_detected, exploitation succeeded — stop further run_exploit/GDB "
-            "unless the user needs a cleaned-up final script only."
-        ),
+        "description": "Execute a pwntools exploit script and return transcript, exit status, and success signals.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -372,7 +349,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
     },
     # --- Dynamic analysis (GDB) tools ---
     "gdb_find_offset": {
-        "description": "Find the exact buffer overflow offset by crashing the binary with a cyclic pattern in GDB and analyzing the crash state. Much more reliable than guessing offsets; on canary binaries this may abort at __stack_chk_fail before RIP control.",
+        "description": "Find a buffer overflow offset in GDB using a cyclic pattern.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -383,7 +360,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
     "gdb_run": {
-        "description": "Run a binary in GDB and return the crash/exit state including registers and signal info.",
+        "description": "Run a binary in GDB and return crash or exit state plus registers.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -395,7 +372,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
     "gdb_breakpoint": {
-        "description": "Set a breakpoint in GDB, run the binary, return registers, stack_dump, compact disassembly at RIP (disassembly), and a shortened run transcript (output).",
+        "description": "Break in GDB at an address or symbol and return registers, stack, disassembly, and transcript.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -427,7 +404,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
     "gdb_vmmap": {
-        "description": "Show the memory map of a running process in GDB. Useful for finding stack/heap addresses.",
+        "description": "Show the process memory map in GDB.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -438,7 +415,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
     "gdb_stack": {
-        "description": "Dump stack words around RSP. Useful for understanding stack layout.",
+        "description": "Dump stack words around RSP in GDB.",
         "input_schema": {
             "type": "object",
             "properties": {
