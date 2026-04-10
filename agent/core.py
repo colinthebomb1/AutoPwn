@@ -834,7 +834,9 @@ class AutoPwnAgent:
                     })
 
                 messages.append({"role": "user", "content": tool_results})
-                current_head_messages = base_head_messages + (1 if known_facts_index is not None else 0)
+                current_head_messages = base_head_messages + (
+                    1 if known_facts_index is not None else 0
+                )
                 _trim_conversation(messages, head_messages=current_head_messages)
 
             if response.stop_reason == "end_turn" and tool_use_blocks:
