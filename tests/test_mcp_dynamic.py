@@ -92,6 +92,50 @@ class TestGDBBreakpoint:
             "run_with_stdin:30",
         ]
 
+    def test_uses_32bit_registers_and_stack_for_i386(self, monkeypatch):
+        from agent.mcp_servers.dynamic_analysis import server as gdb_server_mod
+
+        class FakeSession:
+            def __init__(self):
+                self.commands: list[str] = []
+
+            @property
+            def alive(self):
+                return True
+
+            def start(self, path):
+                self.commands.append(f"start:{path}")
+
+            def command(self, cmd, timeout=None):
+                self.commands.append(cmd)
+                if cmd == "info registers":
+                    return "eip 0x8049000\nesp 0xfffef000\nebp 0xfffef100"
+                if cmd == "x/12i $eip":
+                    return "=> 0x8049000 <vuln>: ret"
+                if cmd == "x/16wx $esp":
+                    return "0xfffef000:\t0x41414141"
+                return "Breakpoint 1, vuln ()"
+
+            def run_with_stdin(self, stdin_data, timeout=None):
+                self.commands.append(f"run_with_stdin:{timeout}")
+                return "Breakpoint 1, vuln ()"
+
+            def close(self):
+                self.commands.append("close")
+
+        monkeypatch.setattr(gdb_server_mod, "_resolve_binary", lambda p: p)
+        monkeypatch.setattr(gdb_server_mod, "_get_session", lambda: FakeSession())
+        monkeypatch.setattr(
+            gdb_server_mod,
+            "_gdb_arch_context",
+            lambda path: ("i386", "eip", "esp", "ebp"),
+        )
+
+        result = gdb_server_mod.gdb_breakpoint("/tmp/fake", address="vuln", stdin_data="A")
+        assert result["disassembly"] == "=> 0x8049000 <vuln>: ret"
+        assert "0x41414141" in result["stack_dump"]
+        assert result["registers"]["eip"] == "0x8049000"
+
 
 class TestGDBStack:
     def test_dump_stack(self, ret2win_binary):

@@ -60,12 +60,24 @@ def _parse_registers(output: str) -> dict[str, str]:
 def _registers_fallback(session) -> dict[str, str]:
     """When `info registers` layout differs (pwndbg/GDB versions), use print expressions."""
     regs: dict[str, str] = {}
-    for name in ("rip", "rsp", "rbp", "rax"):
+    for name in ("rip", "rsp", "rbp", "rax", "eip", "esp", "ebp", "eax"):
         out = session.command(f"p/x ${name}")
         m = re.search(r"(0x[0-9a-fA-F]+)", out)
         if m:
             regs[name] = m.group(1)
     return regs
+
+
+def _gdb_arch_context(binary_path: str) -> tuple[str, str, str, str]:
+    from pwn import ELF
+
+    try:
+        elf = ELF(binary_path, checksec=False)
+    except OSError:
+        return ("amd64", "rip", "rsp", "rbp")
+    if getattr(elf, "bits", None) == 32 or str(getattr(elf, "arch", "")).lower() in {"i386", "386"}:
+        return ("i386", "eip", "esp", "ebp")
+    return ("amd64", "rip", "rsp", "rbp")
 
 
 def _gdb_command_failed(output: str) -> bool:
@@ -95,8 +107,9 @@ def gdb_find_offset(binary_path: str, pattern_length: int = 300) -> dict:
     """
     from pwn import context, cyclic, cyclic_find
 
-    context.arch = "amd64"
     path = _resolve_binary(binary_path)
+    arch, ip_reg, _, frame_reg = _gdb_arch_context(path)
+    context.arch = arch
     pattern = cyclic(pattern_length)
 
     session = _get_session()
@@ -122,11 +135,11 @@ def gdb_find_offset(binary_path: str, pattern_length: int = 300) -> dict:
                 signal_info = sig_match.group(1)
 
     # Read registers after crash
-    reg_output = session.command("info registers rip rsp rbp")
+    reg_output = session.command(f"info registers {ip_reg} {frame_reg}")
     regs = _parse_registers(reg_output)
 
-    rip_val = regs.get("rip", "")
-    rbp_val = regs.get("rbp", "")
+    rip_val = regs.get(ip_reg, "")
+    rbp_val = regs.get(frame_reg, "")
 
     offset = None
     crash_addr = None
@@ -202,6 +215,7 @@ def gdb_run(
     Returns dict with: output, signal, registers, exit_code.
     """
     path = _resolve_binary(binary_path)
+    _, ip_reg, sp_reg, _ = _gdb_arch_context(path)
     session = _get_session()
     session.start(path)
 
@@ -262,6 +276,7 @@ def gdb_breakpoint(
     Returns dict with: registers, stack_dump, disassembly, output (compact), command_results.
     """
     path = _resolve_binary(binary_path)
+    _, ip_reg, sp_reg, _ = _gdb_arch_context(path)
     session = _get_session()
     session.start(path)
 
@@ -288,10 +303,11 @@ def gdb_breakpoint(
     if not regs:
         regs = _registers_fallback(session)
 
-    disasm = compact_gdb_transcript(session.command("x/12i $rip"), max_chars=1200)
+    disasm = compact_gdb_transcript(session.command(f"x/12i ${ip_reg}"), max_chars=1200)
 
     # Dump stack
-    stack_output = session.command("x/16gx $rsp")
+    stack_format = "wx" if sp_reg == "esp" else "gx"
+    stack_output = session.command(f"x/16{stack_format} ${sp_reg}")
 
     # Run any extra commands
     cmd_results = {}
@@ -399,6 +415,7 @@ def gdb_stack(
     Returns dict with: stack contents, RSP value.
     """
     path = _resolve_binary(binary_path)
+    _, _, sp_reg, _ = _gdb_arch_context(path)
     session = _get_session()
     session.start(path)
 
@@ -411,8 +428,9 @@ def gdb_stack(
     elif break_at:
         session.command("run", timeout=30)
 
-    rsp_output = session.command("p/x $rsp")
-    stack_output = session.command(f"x/{count}gx $rsp")
+    stack_format = "wx" if sp_reg == "esp" else "gx"
+    rsp_output = session.command(f"p/x ${sp_reg}")
+    stack_output = session.command(f"x/{count}{stack_format} ${sp_reg}")
     session.close()
 
     rsp_match = re.search(r"(0x[0-9a-fA-F]+)", rsp_output)
