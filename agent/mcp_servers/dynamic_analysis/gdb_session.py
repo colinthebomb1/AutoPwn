@@ -108,6 +108,7 @@ class GDBSession:
             raise RuntimeError("GDB session is not running.")
 
         import tempfile
+
         with tempfile.NamedTemporaryFile(delete=False, suffix=".bin") as f:
             f.write(stdin_data)
             input_file = f.name

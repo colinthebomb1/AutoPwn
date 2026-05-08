@@ -10,8 +10,6 @@ import random
 import re
 import subprocess
 import time
-
-log = logging.getLogger(__name__)
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -24,6 +22,7 @@ from agent.planner import plan_from_checksec
 from agent.prompts import get_system_prompt
 from agent.tools import TOOL_MODULE_MAP, TOOL_REGISTRY
 
+log = logging.getLogger(__name__)
 console = Console()
 
 # Strip Markdown inline-code spans with no real content (model often emits `` or ` `).
@@ -72,8 +71,7 @@ def _bootstrap_ghidra_function_names(func_addrs: dict[str, Any], max_funcs: int)
     library_heavy = any(
         k.startswith(("_", "dl", "pthread_"))
         or any(
-            part in k.lower()
-            for part in ("printf", "scanf", "malloc", "free", "locale", "unwind")
+            part in k.lower() for part in ("printf", "scanf", "malloc", "free", "locale", "unwind")
         )
         for k in keys
     )
@@ -164,9 +162,7 @@ def _shallow_copy_strip_run_exploit_script(result: Any) -> Any:
 
 def _tool_result_str_for_api(tool_name: str, result: Any, suffix: str = "") -> str:
     payload = (
-        _shallow_copy_strip_run_exploit_script(result)
-        if tool_name == "run_exploit"
-        else result
+        _shallow_copy_strip_run_exploit_script(result) if tool_name == "run_exploit" else result
     )
     body = json.dumps(payload, separators=(",", ":"), default=str) + suffix
     cap = _env_int("PWN_AGENT_TOOL_RESULT_MAX", 4500)
@@ -369,6 +365,7 @@ def _exploits_dir() -> str:
 # Checkpoint helpers
 # ---------------------------------------------------------------------------
 
+
 def _checkpoint_path(binary_path: str) -> str:
     stem = _binary_stem(binary_path)
     return os.path.join(os.path.dirname(binary_path), f".autopwn_checkpoint_{stem}.json")
@@ -389,12 +386,14 @@ def _serialize_messages(messages: list[dict]) -> list[dict]:
                     if t == "text":
                         blocks.append({"type": "text", "text": getattr(block, "text", "")})
                     elif t == "tool_use":
-                        blocks.append({
-                            "type": "tool_use",
-                            "id": getattr(block, "id", ""),
-                            "name": getattr(block, "name", ""),
-                            "input": dict(getattr(block, "input", {})),
-                        })
+                        blocks.append(
+                            {
+                                "type": "tool_use",
+                                "id": getattr(block, "id", ""),
+                                "name": getattr(block, "name", ""),
+                                "input": dict(getattr(block, "input", {})),
+                            }
+                        )
                     else:
                         blocks.append({"type": t})
                 else:
@@ -515,6 +514,7 @@ def _call_tool(name: str, arguments: dict) -> Any:
 # Agent
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class AgentResult:
     success: bool
@@ -545,6 +545,7 @@ class AutoPwnAgent:
         Returns a JSON string injected as the bootstrap message so the agent can
         reuse checksec/symbol/string/decompilation results without re-querying.
         """
+
         def _safe_call(name: str, args: dict) -> Any:
             try:
                 return _call_tool(name, args)
@@ -575,9 +576,7 @@ class AutoPwnAgent:
         )
         plt_res = _safe_call("elf_symbols", {"binary_path": binary_path, "symbol_type": "plt"})
         got_res = _safe_call("elf_symbols", {"binary_path": binary_path, "symbol_type": "got"})
-        strings_res = _safe_call(
-            "strings_search", {"binary_path": binary_path, "min_length": 4}
-        )
+        strings_res = _safe_call("strings_search", {"binary_path": binary_path, "min_length": 4})
         ldd_out = _safe_cmd(["ldd", binary_path])
         interp_out = _safe_cmd(["readelf", "-l", binary_path])
 
@@ -693,7 +692,9 @@ class AutoPwnAgent:
                 "description": strategy.description,
                 "technique_hints": strategy.technique_hints,
                 "suggested_tools": strategy.suggested_tools,
-            } if strategy else None,
+            }
+            if strategy
+            else None,
         }
         # Keep the injected message short enough to avoid token blowups; allow more when
         # Ghidra succeeded (decompilation is the main reason for a larger bootstrap).
@@ -812,8 +813,8 @@ class AutoPwnAgent:
                         f"Analyze and exploit the binary at `{binary_path}`. "
                         "Start with `checksec` + `elf_symbols` for recon, "
                         "but if bootstrap provides those values, reuse them. "
-                        "If bootstrap includes `ghidra_decompile` with ok=true, treat that pseudocode "
-                        "as primary source for control flow before writing exploits. "
+                        "If bootstrap includes `ghidra_decompile` with ok=true, treat that "
+                        "pseudocode as primary source for control flow before writing exploits. "
                         "Whenever bootstrap or a tool result settles reusable facts, update the "
                         "<known_facts>...</known_facts> block in your next normal reply with one "
                         "bullet-style fact per line before asking for more recon. Only include "
@@ -883,7 +884,7 @@ class AutoPwnAgent:
                     if attempt >= 5:
                         break
                     # Exponential backoff with small jitter.
-                    sleep_s = min(2 ** attempt, 20) + random.uniform(0, 0.75)
+                    sleep_s = min(2**attempt, 20) + random.uniform(0, 0.75)
                     console.print(
                         "[dim]Anthropic busy (attempt "
                         f"{attempt}/4). Sleeping {sleep_s:.1f}s...[/dim]"
@@ -894,9 +895,7 @@ class AutoPwnAgent:
 
             assistant_content = response.content
             tool_use_blocks = []
-            total_usage = _usage_add(
-                total_usage, _usage_to_dict(getattr(response, "usage", None))
-            )
+            total_usage = _usage_add(total_usage, _usage_to_dict(getattr(response, "usage", None)))
 
             for block in assistant_content:
                 if block.type == "text":
@@ -991,9 +990,7 @@ class AutoPwnAgent:
                         script = tool_input.get("script")
                         if isinstance(script, str) and script.strip():
                             lp = _save_last_attempt_exploit(binary_path, script)
-                            console.print(
-                                f"[dim]Latest exploit mirrored to {lp}[/dim]"
-                            )
+                            console.print(f"[dim]Latest exploit mirrored to {lp}[/dim]")
 
                     suffix = ""
                     if (
@@ -1026,11 +1023,13 @@ class AutoPwnAgent:
 
                     result_str = _tool_result_str_for_api(tool_name, result, suffix)
 
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": tool_block.id,
-                        "content": result_str,
-                    })
+                    tool_results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tool_block.id,
+                            "content": result_str,
+                        }
+                    )
 
                 messages.append({"role": "user", "content": tool_results})
                 if not updated_known_facts_this_turn:
@@ -1093,9 +1092,7 @@ class AutoPwnAgent:
 
     def _display_tool_result(self, name: str, result: Any, elapsed: float) -> None:
         result_str = (
-            json.dumps(result, indent=2, default=str)
-            if not isinstance(result, str)
-            else result
+            json.dumps(result, indent=2, default=str) if not isinstance(result, str) else result
         )
         if len(result_str) > 2000:
             result_str = result_str[:2000] + "\n... [truncated]"

@@ -140,13 +140,9 @@ def test_bootstrap_function_symbol_scope_prefers_user_for_static_binaries() -> N
     from agent.core import _bootstrap_function_symbol_scope
 
     assert (
-        _bootstrap_function_symbol_scope({"pie": False, "runpath": None, "rpath": None})
-        == "user"
+        _bootstrap_function_symbol_scope({"pie": False, "runpath": None, "rpath": None}) == "user"
     )
-    assert (
-        _bootstrap_function_symbol_scope({"pie": True, "runpath": None, "rpath": None})
-        == "all"
-    )
+    assert _bootstrap_function_symbol_scope({"pie": True, "runpath": None, "rpath": None}) == "all"
     assert (
         _bootstrap_function_symbol_scope({"pie": False, "runpath": "/tmp/lib", "rpath": None})
         == "all"

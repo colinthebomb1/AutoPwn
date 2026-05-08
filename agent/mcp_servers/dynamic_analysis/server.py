@@ -93,6 +93,7 @@ def _gdb_command_failed(output: str) -> bool:
 # Tools
 # ---------------------------------------------------------------------------
 
+
 @mcp.tool()
 def gdb_find_offset(binary_path: str, pattern_length: int = 300) -> dict:
     """Find the exact buffer overflow offset by sending a cyclic pattern and analyzing the crash.

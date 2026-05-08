@@ -101,6 +101,7 @@ def main(
             console.print(f"\n[bold]Final exploit saved to:[/bold] {os.path.abspath(final_path)}")
             console.print()
             from rich.syntax import Syntax
+
             console.print(Syntax(result.exploit_script, "python", theme="monokai"))
     else:
         console.print("[bold red]✗ Solve failed[/bold red]")
@@ -111,8 +112,7 @@ def main(
             console.print(f"[dim]Latest run_exploit script (if any): {last_path}[/dim]")
 
     console.print(
-        f"\n[dim]Iterations: {result.iterations} | "
-        f"Tool calls: {len(result.tool_calls)}[/dim]"
+        f"\n[dim]Iterations: {result.iterations} | Tool calls: {len(result.tool_calls)}[/dim]"
     )
 
 

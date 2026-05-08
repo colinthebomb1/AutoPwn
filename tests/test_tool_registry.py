@@ -2,8 +2,6 @@
 
 import importlib
 
-import pytest
-
 from agent.tools import TOOL_MODULE_MAP, TOOL_REGISTRY
 
 
@@ -28,7 +26,9 @@ class TestToolRegistrySync:
                 continue
             if not callable(getattr(mod, tool_name, None)):
                 missing.append(f"{tool_name}: not found in {module_key} module")
-        assert not missing, "Some tools in TOOL_MODULE_MAP don't resolve to callables:\n" + "\n".join(missing)
+        assert not missing, (
+            "Some tools in TOOL_MODULE_MAP don't resolve to callables:\n" + "\n".join(missing)
+        )
 
     def test_registry_entries_have_required_fields(self):
         for name, spec in TOOL_REGISTRY.items():
