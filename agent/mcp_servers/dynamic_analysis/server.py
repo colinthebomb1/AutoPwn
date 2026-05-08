@@ -33,7 +33,7 @@ def _get_session() -> GDBSession:
 
 
 def _resolve_binary(path: str) -> str:
-    resolved = os.path.abspath(os.path.expanduser(path))
+    resolved = os.path.abspath(path)
     if not os.path.isfile(resolved):
         raise FileNotFoundError(f"Binary not found: {resolved}")
     return resolved

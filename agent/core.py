@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 import os
 import random
 import re
 import subprocess
 import time
+
+log = logging.getLogger(__name__)
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -362,6 +365,94 @@ def _exploits_dir() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "exploits"))
 
 
+# ---------------------------------------------------------------------------
+# Checkpoint helpers
+# ---------------------------------------------------------------------------
+
+def _checkpoint_path(binary_path: str) -> str:
+    stem = _binary_stem(binary_path)
+    return os.path.join(os.path.dirname(binary_path), f".autopwn_checkpoint_{stem}.json")
+
+
+def _serialize_messages(messages: list[dict]) -> list[dict]:
+    """Convert Anthropic SDK content block objects to plain dicts for JSON serialization."""
+    out: list[dict] = []
+    for msg in messages:
+        content = msg["content"]
+        if isinstance(content, list):
+            blocks: list[dict] = []
+            for block in content:
+                if isinstance(block, dict):
+                    blocks.append(block)
+                elif hasattr(block, "type"):
+                    t = block.type
+                    if t == "text":
+                        blocks.append({"type": "text", "text": getattr(block, "text", "")})
+                    elif t == "tool_use":
+                        blocks.append({
+                            "type": "tool_use",
+                            "id": getattr(block, "id", ""),
+                            "name": getattr(block, "name", ""),
+                            "input": dict(getattr(block, "input", {})),
+                        })
+                    else:
+                        blocks.append({"type": t})
+                else:
+                    blocks.append({"type": "text", "text": str(block)})
+            out.append({"role": msg["role"], "content": blocks})
+        else:
+            out.append({"role": msg["role"], "content": content})
+    return out
+
+
+def _save_checkpoint(
+    path: str,
+    *,
+    iteration: int,
+    messages: list[dict],
+    known_facts: list[str],
+    known_facts_index: int | None,
+    known_facts_insert_at: int,
+    base_head_messages: int,
+    planner_injected: bool,
+    total_usage: dict[str, int],
+    all_tool_calls: list[dict],
+) -> None:
+    data = {
+        "iteration": iteration,
+        "messages": _serialize_messages(messages),
+        "known_facts": known_facts,
+        "known_facts_index": known_facts_index,
+        "known_facts_insert_at": known_facts_insert_at,
+        "base_head_messages": base_head_messages,
+        "planner_injected": planner_injected,
+        "total_usage": total_usage,
+        "all_tool_calls": all_tool_calls,
+    }
+    try:
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, separators=(",", ":"), default=str)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def _load_checkpoint(path: str) -> dict | None:
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _delete_checkpoint(path: str) -> None:
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
 def _binary_stem(binary_path: str) -> str:
     return os.path.splitext(os.path.basename(binary_path))[0]
 
@@ -416,6 +507,7 @@ def _call_tool(name: str, arguments: dict) -> Any:
     try:
         return func(**arguments)
     except Exception as e:
+        log.debug("Tool %s raised %s", name, type(e).__name__, exc_info=True)
         return {"error": f"{type(e).__name__}: {e}"}
 
 
@@ -447,18 +539,189 @@ class AutoPwnAgent:
         self.client = anthropic.Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY"))
         self.verbose = verbose
 
+    def _run_bootstrap(self, binary_path: str) -> str:
+        """Run cheap local analysis tools and optional Ghidra before the ReAct loop.
+
+        Returns a JSON string injected as the bootstrap message so the agent can
+        reuse checksec/symbol/string/decompilation results without re-querying.
+        """
+        def _safe_call(name: str, args: dict) -> Any:
+            try:
+                return _call_tool(name, args)
+            except Exception as e:
+                return {"error": f"{type(e).__name__}: {e}"}
+
+        def _safe_cmd(cmd: list[str], timeout_s: int = 3) -> str | None:
+            try:
+                out = subprocess.check_output(
+                    cmd,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=timeout_s,
+                )
+                return out.strip()
+            except Exception:
+                return None
+
+        checksec_res = _safe_call("checksec", {"binary_path": binary_path})
+        function_symbol_scope = _bootstrap_function_symbol_scope(checksec_res)
+        funcs_res = _safe_call(
+            "elf_symbols",
+            {
+                "binary_path": binary_path,
+                "symbol_type": "functions",
+                "symbol_scope": function_symbol_scope,
+            },
+        )
+        plt_res = _safe_call("elf_symbols", {"binary_path": binary_path, "symbol_type": "plt"})
+        got_res = _safe_call("elf_symbols", {"binary_path": binary_path, "symbol_type": "got"})
+        strings_res = _safe_call(
+            "strings_search", {"binary_path": binary_path, "min_length": 4}
+        )
+        ldd_out = _safe_cmd(["ldd", binary_path])
+        interp_out = _safe_cmd(["readelf", "-l", binary_path])
+
+        runtime_libc_lines: list[str] = []
+        runtime_loader: str | None = None
+        if isinstance(ldd_out, str):
+            for line in ldd_out.splitlines():
+                s = line.strip()
+                if not s:
+                    continue
+                if "libc.so" in s:
+                    runtime_libc_lines.append(s)
+                if "ld-linux" in s or "ld-musl" in s:
+                    runtime_loader = s
+
+        requested_interp: str | None = None
+        if isinstance(interp_out, str):
+            m = re.search(r"Requesting program interpreter:\s*(.+?)\]", interp_out)
+            if m:
+                requested_interp = m.group(1).strip()
+
+        plt = plt_res.get("plt", {}) if isinstance(plt_res, dict) else {}
+        got = got_res.get("got", {}) if isinstance(got_res, dict) else {}
+        func_addrs = funcs_res.get("functions", {}) if isinstance(funcs_res, dict) else {}
+
+        main_addr = func_addrs.get("main")
+        vuln_addr = func_addrs.get("vuln")
+
+        def _pick(d: dict, keys: tuple[str, ...]) -> dict:
+            out: dict[str, Any] = {}
+            for k in keys:
+                if k in d:
+                    out[k] = d[k]
+            return out
+
+        ghidra_res: Any = None
+        ghidra_names: list[str] = []
+        if _env_bool("PWN_AGENT_BOOTSTRAP_GHIDRA", True):
+            max_fn = _env_int("PWN_AGENT_BOOTSTRAP_GHIDRA_MAX_FUNCS", 12)
+            ghidra_names = _bootstrap_ghidra_function_names(func_addrs, max_fn)
+            timeout_s = _env_int("PWN_AGENT_BOOTSTRAP_GHIDRA_TIMEOUT", 300)
+            per_fn = _env_int("PWN_AGENT_BOOTSTRAP_GHIDRA_MAX_CHARS", 6000)
+            names_preview = ", ".join(ghidra_names[:8])
+            if len(ghidra_names) > 8:
+                names_preview += f", … (+{len(ghidra_names) - 8} more)"
+            console.print(
+                f"[dim]Bootstrap: Ghidra decompile — "
+                f"{len(ghidra_names)} functions ({names_preview}), "
+                f"timeout {timeout_s}s…[/dim]"
+            )
+            ghidra_res = _safe_call(
+                "ghidra_decompile",
+                {
+                    "binary_path": binary_path,
+                    "functions": ghidra_names,
+                    "timeout": timeout_s,
+                    "max_chars_per_function": per_fn,
+                },
+            )
+            if isinstance(ghidra_res, dict) and ghidra_res.get("ok"):
+                decompiled = list(ghidra_res.get("functions", {}).keys())
+                cache_info = ghidra_res.get("cache", {})
+                hits = cache_info.get("function_hits", [])
+                misses = cache_info.get("function_misses", [])
+                missing = [n for n in ghidra_names if n not in decompiled]
+                parts = [f"[green]ok[/green] {len(decompiled)}/{len(ghidra_names)} decompiled"]
+                if hits:
+                    parts.append(f"[dim]{len(hits)} from cache[/dim]")
+                if misses:
+                    parts.append(f"[dim]{len(misses)} analyzed[/dim]")
+                if missing:
+                    parts.append(f"[yellow]not found: {', '.join(missing)}[/yellow]")
+                console.print("[dim]Ghidra: " + " · ".join(parts) + "[/dim]")
+            elif isinstance(ghidra_res, dict):
+                console.print(
+                    f"[dim][yellow]Ghidra: failed — "
+                    f"{ghidra_res.get('error', 'unknown error')}[/yellow][/dim]"
+                )
+
+        strategy = None
+        if isinstance(checksec_res, dict) and "error" not in checksec_res:
+            strategy = plan_from_checksec(checksec_res)
+            console.print(
+                Panel(
+                    f"Strategy: [bold]{strategy.name}[/bold] — {strategy.description}",
+                    title="Planner",
+                    border_style="magenta",
+                )
+            )
+
+        bootstrap = {
+            "checksec": checksec_res,
+            "main": main_addr,
+            "vuln": vuln_addr,
+            "plt": _pick(plt, ("puts", "printf", "read", "system")),
+            "got": _pick(got, ("puts", "printf", "read", "system")),
+            "runtime": {
+                "ldd_libc_lines": runtime_libc_lines,
+                "ldd_loader_line": runtime_loader,
+                "requested_program_interpreter": requested_interp,
+            },
+            # Unfiltered; may be truncated by the overall bootstrap size cap.
+            "strings": strings_res if isinstance(strings_res, list) else strings_res,
+            "strings_note": "If strings look truncated, rerun strings_search when needed.",
+            "ghidra_decompile": ghidra_res,
+            "ghidra_functions_requested": ghidra_names,
+            "ghidra_note": (
+                "Pseudocode from headless Ghidra when ok=true; reuse before re-calling "
+                "ghidra_decompile. Set PWN_AGENT_BOOTSTRAP_GHIDRA=0 to skip."
+            ),
+            "strategy": {
+                "name": strategy.name,
+                "description": strategy.description,
+                "technique_hints": strategy.technique_hints,
+                "suggested_tools": strategy.suggested_tools,
+            } if strategy else None,
+        }
+        # Keep the injected message short enough to avoid token blowups; allow more when
+        # Ghidra succeeded (decompilation is the main reason for a larger bootstrap).
+        ghidra_ok = isinstance(ghidra_res, dict) and ghidra_res.get("ok") is True
+        if ghidra_ok:
+            cap = _env_int("PWN_AGENT_BOOTSTRAP_MAX_CHARS_WITH_GHIDRA", 12000)
+        else:
+            cap = _env_int("PWN_AGENT_BOOTSTRAP_MAX_CHARS", 2500)
+        dumped = json.dumps(bootstrap, separators=(",", ":"), default=str)
+        if len(dumped) > cap:
+            dumped = dumped[:cap] + "\n... [bootstrap truncated]"
+        return dumped, strategy is not None
+
     def solve(
         self,
         binary_path: str,
         remote: str | None = None,
         *,
         user_context: str | None = None,
+        fresh: bool = False,
     ) -> AgentResult:
         """Run the full ReAct loop to analyze and exploit a binary.
 
         ``user_context``: optional free-form text from the operator (CTF story,
         constraints, suspected bug class or solve sketch). Shown to the model before
         bootstrap. Length capped by ``PWN_AGENT_USER_CONTEXT_MAX`` (default 12000).
+
+        ``fresh``: if True, ignore any existing checkpoint and start from scratch.
         """
         binary_path = os.path.abspath(binary_path)
         if not os.path.isfile(binary_path):
@@ -496,7 +759,14 @@ class AutoPwnAgent:
 
         system = get_system_prompt()
         if remote:
-            host, port = remote.split(":")
+            parts = remote.rsplit(":", 1)
+            if len(parts) != 2 or not parts[1].isdigit():
+                return AgentResult(
+                    success=False,
+                    summary=f"Invalid remote target {remote!r}: expected host:port or [ipv6]:port",
+                    iterations=0,
+                )
+            host, port = parts
             system += f"\n\nRemote target: {host}:{port}"
 
         system_blocks: list[dict[str, Any]] = [
@@ -509,191 +779,86 @@ class AutoPwnAgent:
             }
         ]
 
-        # ------------------------------------------------------------------
-        # Bootstrap analysis (cheap local tools + optional Ghidra)
-        # ------------------------------------------------------------------
-        # The goal is to avoid the agent spending early iterations re-running
-        # `checksec`, `elf_symbols`, `strings_search`, and (when configured) `ghidra_decompile`.
-        def _bootstrap() -> str:
-            def _safe_call(name: str, args: dict) -> Any:
-                try:
-                    return _call_tool(name, args)
-                except Exception as e:
-                    return {"error": f"{type(e).__name__}: {e}"}
+        checkpoint_path = _checkpoint_path(binary_path)
+        checkpoint = None if fresh else _load_checkpoint(checkpoint_path)
 
-            def _safe_cmd(cmd: list[str], timeout_s: int = 3) -> str | None:
-                try:
-                    out = subprocess.check_output(
-                        cmd,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        timeout=timeout_s,
-                    )
-                    return out.strip()
-                except Exception:
-                    return None
+        if checkpoint:
+            resume_iter = checkpoint["iteration"] + 1
+            console.print(
+                Panel(
+                    f"[bold]Resuming from checkpoint[/bold] — "
+                    f"iteration {checkpoint['iteration']} of {self.max_iterations} completed\n"
+                    f"[dim]Pass --fresh to start over.[/dim]",
+                    title="AutoPwn",
+                    border_style="yellow",
+                )
+            )
+            messages: list[dict] = checkpoint["messages"]
+            known_facts: list[str] = checkpoint["known_facts"]
+            known_facts_index: int | None = checkpoint["known_facts_index"]
+            known_facts_insert_at: int = checkpoint["known_facts_insert_at"]
+            base_head_messages: int = checkpoint["base_head_messages"]
+            planner_injected: bool = checkpoint["planner_injected"]
+            total_usage: dict[str, int] = checkpoint["total_usage"]
+            all_tool_calls: list[dict] = checkpoint["all_tool_calls"]
+        else:
+            resume_iter = 1
+            bootstrap_msg, strategy_injected = self._run_bootstrap(binary_path)
 
-            checksec_res = _safe_call("checksec", {"binary_path": binary_path})
-            function_symbol_scope = _bootstrap_function_symbol_scope(checksec_res)
-            funcs_res = _safe_call(
-                "elf_symbols",
+            messages = [
                 {
-                    "binary_path": binary_path,
-                    "symbol_type": "functions",
-                    "symbol_scope": function_symbol_scope,
-                },
-            )
-            plt_res = _safe_call("elf_symbols", {"binary_path": binary_path, "symbol_type": "plt"})
-            got_res = _safe_call("elf_symbols", {"binary_path": binary_path, "symbol_type": "got"})
-            strings_res = _safe_call(
-                "strings_search", {"binary_path": binary_path, "min_length": 4}
-            )
-            ldd_out = _safe_cmd(["ldd", binary_path])
-            interp_out = _safe_cmd(["readelf", "-l", binary_path])
+                    "role": "user",
+                    "content": (
+                        f"Analyze and exploit the binary at `{binary_path}`. "
+                        "Start with `checksec` + `elf_symbols` for recon, "
+                        "but if bootstrap provides those values, reuse them. "
+                        "If bootstrap includes `ghidra_decompile` with ok=true, treat that pseudocode "
+                        "as primary source for control flow before writing exploits. "
+                        "Whenever bootstrap or a tool result settles reusable facts, update the "
+                        "<known_facts>...</known_facts> block in your next normal reply with one "
+                        "bullet-style fact per line before asking for more recon. Only include "
+                        "settled, reusable facts; omit the block when nothing needs updating. "
+                        "Do not re-query tools for facts already present in bootstrap, recent tool "
+                        "results, or the known-facts summary unless you first state the unresolved "
+                        "ambiguity. "
+                        "On static binaries, avoid broad "
+                        "`elf_symbols(symbol_type='all', symbol_scope='all')` unless you need "
+                        "runtime/libc/compiler symbols for a specific reason; prefer the default "
+                        "narrower symbol scope and curated `strings_search` output first. "
+                        "Use gdb_find_offset to determine buffer overflow offsets precisely."
+                    ),
+                }
+            ]
 
-            runtime_libc_lines: list[str] = []
-            runtime_loader: str | None = None
-            if isinstance(ldd_out, str):
-                for line in ldd_out.splitlines():
-                    s = line.strip()
-                    if not s:
-                        continue
-                    if "libc.so" in s:
-                        runtime_libc_lines.append(s)
-                    if "ld-linux" in s or "ld-musl" in s:
-                        runtime_loader = s
-
-            requested_interp: str | None = None
-            if isinstance(interp_out, str):
-                m = re.search(r"Requesting program interpreter:\s*(.+?)\]", interp_out)
-                if m:
-                    requested_interp = m.group(1).strip()
-
-            plt = plt_res.get("plt", {}) if isinstance(plt_res, dict) else {}
-            got = got_res.get("got", {}) if isinstance(got_res, dict) else {}
-            func_addrs = funcs_res.get("functions", {}) if isinstance(funcs_res, dict) else {}
-
-            main_addr = func_addrs.get("main")
-            vuln_addr = func_addrs.get("vuln")
-
-            def _pick(d: dict, keys: tuple[str, ...]) -> dict:
-                out: dict[str, Any] = {}
-                for k in keys:
-                    if k in d:
-                        out[k] = d[k]
-                return out
-
-            ghidra_res: Any = None
-            ghidra_names: list[str] = []
-            if _env_bool("PWN_AGENT_BOOTSTRAP_GHIDRA", True):
-                max_fn = _env_int("PWN_AGENT_BOOTSTRAP_GHIDRA_MAX_FUNCS", 12)
-                ghidra_names = _bootstrap_ghidra_function_names(func_addrs, max_fn)
-                timeout_s = _env_int("PWN_AGENT_BOOTSTRAP_GHIDRA_TIMEOUT", 300)
-                per_fn = _env_int("PWN_AGENT_BOOTSTRAP_GHIDRA_MAX_CHARS", 6000)
-                console.print(
-                    "[dim]Bootstrap: Ghidra decompile ("
-                    f"{len(ghidra_names)} functions, timeout {timeout_s}s)…[/dim]"
-                )
-                ghidra_res = _safe_call(
-                    "ghidra_decompile",
+            if user_context:
+                messages.append(
                     {
-                        "binary_path": binary_path,
-                        "functions": ghidra_names,
-                        "timeout": timeout_s,
-                        "max_chars_per_function": per_fn,
-                    },
+                        "role": "user",
+                        "content": _operator_notes_message(user_context),
+                    }
                 )
 
-            bootstrap = {
-                "checksec": checksec_res,
-                "main": main_addr,
-                "vuln": vuln_addr,
-                "plt": _pick(plt, ("puts", "printf", "read", "system")),
-                "got": _pick(got, ("puts", "printf", "read", "system")),
-                "runtime": {
-                    "ldd_libc_lines": runtime_libc_lines,
-                    "ldd_loader_line": runtime_loader,
-                    "requested_program_interpreter": requested_interp,
-                },
-                # Unfiltered; may be truncated by the overall bootstrap size cap.
-                "strings": strings_res if isinstance(strings_res, list) else strings_res,
-                "strings_note": "If strings look truncated, rerun strings_search when needed.",
-                "ghidra_decompile": ghidra_res,
-                "ghidra_functions_requested": ghidra_names,
-                "ghidra_note": (
-                    "Pseudocode from headless Ghidra when ok=true; reuse before re-calling "
-                    "ghidra_decompile. Set PWN_AGENT_BOOTSTRAP_GHIDRA=0 to skip."
-                ),
-            }
-            # Keep the injected message short enough to avoid token blowups; allow more when
-            # Ghidra succeeded (decompilation is the main reason for a larger bootstrap).
-            ghidra_ok = isinstance(ghidra_res, dict) and ghidra_res.get("ok") is True
-            if ghidra_ok:
-                cap = _env_int("PWN_AGENT_BOOTSTRAP_MAX_CHARS_WITH_GHIDRA", 12000)
-            else:
-                cap = _env_int("PWN_AGENT_BOOTSTRAP_MAX_CHARS", 2500)
-            dumped = json.dumps(bootstrap, separators=(",", ":"), default=str)
-            if len(dumped) > cap:
-                dumped = dumped[:cap] + "\n... [bootstrap truncated]"
-            return dumped
-
-        bootstrap_msg = _bootstrap()
-
-        messages: list[dict] = [
-            {
-                "role": "user",
-                "content": (
-                    f"Analyze and exploit the binary at `{binary_path}`. "
-                    "Start with `checksec` + `elf_symbols` for recon, "
-                    "but if bootstrap provides those values, reuse them. "
-                    "If bootstrap includes `ghidra_decompile` with ok=true, treat that pseudocode "
-                    "as primary source for control flow before writing exploits. "
-                    "Whenever bootstrap or a tool result settles reusable facts, update the "
-                    "<known_facts>...</known_facts> block in your next normal reply with one "
-                    "bullet-style fact per line before asking for more recon. Only include "
-                    "settled, reusable facts; omit the block when nothing needs updating. "
-                    "Do not re-query tools for facts already present in bootstrap, recent tool "
-                    "results, or the known-facts summary unless you first state the unresolved "
-                    "ambiguity. "
-                    "On static binaries, avoid broad "
-                    "`elf_symbols(symbol_type='all', symbol_scope='all')` unless you need "
-                    "runtime/libc/compiler symbols for a specific reason; prefer the default "
-                    "narrower symbol scope and curated `strings_search` output first. "
-                    "Use gdb_find_offset to determine buffer overflow offsets precisely."
-                ),
-            }
-        ]
-
-        if user_context:
             messages.append(
                 {
                     "role": "user",
-                    "content": _operator_notes_message(user_context),
+                    "content": (
+                        "Bootstrap analysis computed locally to help you start faster "
+                        "(checksec, symbols, strings, and Ghidra pseudocode when the host has it). "
+                        "You can use it as context, but feel free to rerun any tools if needed.\n\n"
+                        f"{bootstrap_msg}"
+                    ),
                 }
             )
 
-        messages.append(
-            {
-                "role": "user",
-                "content": (
-                    "Bootstrap analysis computed locally to help you start faster "
-                    "(checksec, symbols, strings, and Ghidra pseudocode when the host has it). "
-                    "You can use it as context, but feel free to rerun any tools if needed.\n\n"
-                    f"{bootstrap_msg}"
-                ),
-            }
-        )
+            known_facts = []
+            known_facts_insert_at = len(messages)
+            known_facts_index = None
+            base_head_messages = 3 if user_context else 2
+            all_tool_calls = []
+            planner_injected = strategy_injected
+            total_usage = {}
 
-        known_facts: list[str] = []
-        known_facts_insert_at = len(messages)
-        known_facts_index: int | None = None
-        base_head_messages = 3 if user_context else 2
-
-        all_tool_calls: list[dict] = []
-        planner_injected = False
-        total_usage: dict[str, int] = {}
-
-        for iteration in range(1, self.max_iterations + 1):
+        for iteration in range(resume_iter, self.max_iterations + 1):
             console.print(f"\n[dim]─── Iteration {iteration}/{self.max_iterations} ───[/dim]")
 
             # Anthropic sometimes returns 429/529 transient errors. Retry so the
@@ -784,6 +949,7 @@ class AutoPwnAgent:
                             border_style="blue",
                         )
                     )
+                _delete_checkpoint(checkpoint_path)
                 return AgentResult(
                     success=True,
                     summary=summary,
@@ -878,6 +1044,19 @@ class AutoPwnAgent:
                     1 if known_facts_index is not None else 0
                 )
                 _trim_conversation(messages, head_messages=current_head_messages)
+
+            _save_checkpoint(
+                checkpoint_path,
+                iteration=iteration,
+                messages=messages,
+                known_facts=known_facts,
+                known_facts_index=known_facts_index,
+                known_facts_insert_at=known_facts_insert_at,
+                base_head_messages=base_head_messages,
+                planner_injected=planner_injected,
+                total_usage=total_usage,
+                all_tool_calls=all_tool_calls,
+            )
 
             if response.stop_reason == "end_turn" and tool_use_blocks:
                 continue

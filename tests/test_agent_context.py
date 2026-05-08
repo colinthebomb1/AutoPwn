@@ -268,7 +268,7 @@ def test_cli_verbose_flag_wires_into_agent(monkeypatch: pytest.MonkeyPatch, tmp_
             captured["api_key"] = api_key
             captured["verbose"] = verbose
 
-        def solve(self, binary_path, remote=None, user_context=None):
+        def solve(self, binary_path, remote=None, user_context=None, fresh=False):
             from agent.core import AgentResult
 
             captured["binary_path"] = binary_path

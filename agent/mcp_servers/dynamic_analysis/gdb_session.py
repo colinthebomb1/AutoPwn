@@ -73,13 +73,13 @@ class GDBSession:
     def start(self, binary_path: str | None = None) -> str:
         """Start a new GDB session, optionally loading a binary."""
         self.close()
-        cmd = "gdb -q"
+        args = ["gdb", "-q"]
         if binary_path:
             binary_path = os.path.abspath(binary_path)
-            cmd += f" {binary_path}"
+            args.append(binary_path)
             self._binary = binary_path
 
-        self._proc = pexpect.spawn(cmd, timeout=self.timeout, encoding=None)
+        self._proc = pexpect.spawn(args[0], args[1:], timeout=self.timeout, encoding=None)
         self._proc.expect(PROMPT_PATTERN, timeout=self.timeout)
         banner = self._clean(self._proc.before)
         for init_cmd in _GDB_INIT_COMMANDS:
