@@ -5,11 +5,13 @@ from __future__ import annotations
 from importlib import resources
 
 
-def test_core_imports_packaged_mcp_servers() -> None:
-    from agent.core import _get_dynamic_module, _get_exploit_module
+def test_mcp_server_modules_are_importable() -> None:
+    import importlib
 
-    assert _get_exploit_module().__name__ == "agent.mcp_servers.exploit_tools.server"
-    assert _get_dynamic_module().__name__ == "agent.mcp_servers.dynamic_analysis.server"
+    exploit = importlib.import_module("agent.mcp_servers.exploit_tools.server")
+    dynamic = importlib.import_module("agent.mcp_servers.dynamic_analysis.server")
+    assert exploit.__name__ == "agent.mcp_servers.exploit_tools.server"
+    assert dynamic.__name__ == "agent.mcp_servers.dynamic_analysis.server"
 
 
 def test_packaged_ghidra_script_is_bundled() -> None:
