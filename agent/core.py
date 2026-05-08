@@ -709,7 +709,9 @@ class AutoPwnAgent:
 
         strategy = None
         if isinstance(checksec_res, dict) and "error" not in checksec_res:
-            strategy = plan_from_checksec(checksec_res)
+            _fn_names = list(func_addrs.keys()) if func_addrs else None
+            _str_list = strings_res if isinstance(strings_res, list) else None
+            strategy = plan_from_checksec(checksec_res, func_names=_fn_names, strings=_str_list)
             console.print(
                 Panel(
                     f"Strategy: [bold]{strategy.name}[/bold] — {strategy.description}",

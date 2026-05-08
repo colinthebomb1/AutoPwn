@@ -13,12 +13,57 @@ class Strategy:
     technique_hints: list[str]
 
 
-def plan_from_checksec(checksec_result: dict) -> Strategy:
-    """Given checksec output, suggest an initial exploitation strategy."""
+_HEAP_FUNC_KEYWORDS = {"alloc", "malloc", "free", "heap", "tcache", "chunk", "note", "edit"}
+_HEAP_STRING_KEYWORDS = {"malloc", "tcache", "chunk at", "free()", "alloc", "heap"}
+
+
+def _looks_like_heap(
+    func_names: list[str] | None,
+    strings: list[str] | None,
+) -> bool:
+    """Return True when function names or strings signal a heap challenge."""
+    if func_names:
+        lower_names = {n.lower() for n in func_names}
+        heap_fn_hits = sum(
+            1 for kw in _HEAP_FUNC_KEYWORDS if any(kw in n for n in lower_names)
+        )
+        if heap_fn_hits >= 2:
+            return True
+    if strings:
+        joined = "\n".join(strings).lower()
+        if sum(1 for kw in _HEAP_STRING_KEYWORDS if kw in joined) >= 2:
+            return True
+    return False
+
+
+def plan_from_checksec(
+    checksec_result: dict,
+    func_names: list[str] | None = None,
+    strings: list[str] | None = None,
+) -> Strategy:
+    """Given checksec output (and optional function names / strings), suggest a strategy."""
     canary = checksec_result.get("canary", False)
     nx = checksec_result.get("nx", False)
     pie = checksec_result.get("pie", False)
     relro = checksec_result.get("relro", "No RELRO")
+
+    if _looks_like_heap(func_names, strings):
+        return Strategy(
+            name="heap",
+            description=(
+                "Heap challenge detected (menu-driven alloc/free/edit) — "
+                "identify bug class (UAF, double-free, overflow) from source/decompilation, "
+                "check glibc version for tcache/fastbin behaviour, "
+                "use heap_safe_link to encode fd pointers."
+            ),
+            suggested_tools=["elf_symbols", "strings_search", "heap_safe_link", "gdb_run"],
+            technique_hints=[
+                "tcache_poison",
+                "fastbin_dup",
+                "house_of_botcake",
+                "heap_overflow_tcache_poison",
+            ],
+        )
 
     techniques: list[str] = []
     tools: list[str] = ["elf_symbols", "strings_search"]
