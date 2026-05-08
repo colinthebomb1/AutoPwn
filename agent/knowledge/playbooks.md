@@ -84,12 +84,44 @@ def edit(i,d):p.sendlineafter(b'> ', b'3'); p.sendlineafter(b'index', str(i).enc
 def show(i):  p.sendlineafter(b'> ', b'4'); p.sendlineafter(b'index', str(i).encode()); return p.recvuntil(b'\n1)', drop=False)
 ```
 
-**Tcache (glibc 2.35+ safe-linking):**
+**Tcache (glibc 2.32+ safe-linking):**
 
-- `encoded_fd = (chunk_addr >> 12) ^ target_addr` — do NOT write raw target.
+- `encoded_fd = (chunk_user_ptr >> 12) ^ target_addr` — do NOT write raw target.
 - `unaligned tcache chunk detected` = wrong safe-linking math.
 - UAF pattern: alloc A,B → free B,A → UAF edit A's fd → alloc twice → write target.
 - Parse target pointers from banner text when available.
+- Tcache only pops while `counts[i] > 0`; need ≥ N+1 frees before poisoning N-deep
+  target, else count hits 0 before target is reached.
+
+**Fastbin double-free (glibc 2.32+ safe-linking on fastbin fd too):**
+
+- glibc 2.26+ fills tcache (7 entries max) before fastbin — fill tcache first via 7
+  alloc/free cycles, then proceed with fastbin frees.
+- A→B→A chain: `free A`, `free B` (head≠A → pass), `free A` again (head=B≠A → pass).
+- Fastbin fd stores USER pointer (not chunk ptr) in glibc 2.32+.
+  Safe-link key = `chunk_user_ptr >> 12`; encode: `key ^ target_user_ptr`.
+- Global fake chunk needs `__attribute__((aligned(16)))` and a valid size field matching
+  the fastbin class (e.g. `0x31` for fastbin[1]).
+- malloc returns the user pointer directly — expected return = `fake_chunk_addr + 0x10`.
+
+**House of Botcake (tcache double-free bypass via unsorted-bin KEY overwrite):**
+
+- Fill tcache[SZ] to 7 → free target to unsorted bin (KEY overwritten by libc ptr) →
+  free prev (consolidates with target) → **alloc one from tcache** (count 7→6) →
+  free target again (KEY≠tcache_key → passes check, goes to tcache).
+- Do NOT re-free a tcache chunk to drain the count — that trips the tcache double-free
+  KEY check. Use alloc to reduce the count.
+- Alloc an overlapping chunk (size spanning prev+start-of-target) from unsorted bin →
+  write poisoned fd to target's fd field (at offset `prev_size` from overlap base).
+- Two allocs then reach the target address.
+
+**Heap overflow → tcache poison:**
+
+- Overflow from A into adjacent freed B's chunk header: write `p64(0)` (prev_size) +
+  `p64(CHUNK_SZ | 1)` (size, preserve PREV_INUSE) + `p64(B_key ^ target_addr)` (fd).
+- Need tcache count ≥ 2 before freeing B so count remains ≥ 1 after popping B.
+  Free a same-size dummy chunk first (count→1), then free B (count→2), then overflow.
+- B's key = `B_user_ptr >> 12` (same formula as tcache).
 
 ## GDB / dynamic analysis
 

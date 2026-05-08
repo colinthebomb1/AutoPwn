@@ -73,3 +73,18 @@ def format_write_binary() -> str:
 @pytest.fixture
 def heap_tcache_poison_binary() -> str:
     return _compile_if_missing("heap_tcache_poison_x64")
+
+
+@pytest.fixture
+def heap_fastbin_dup_binary() -> str:
+    return _compile_if_missing("heap_fastbin_dup_x64")
+
+
+@pytest.fixture
+def heap_botcake_binary() -> str:
+    return _compile_if_missing("heap_botcake_x64")
+
+
+@pytest.fixture
+def heap_overflow_binary() -> str:
+    return _compile_if_missing("heap_overflow_x64")
