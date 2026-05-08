@@ -326,6 +326,17 @@ def _extract_known_facts_block(text: str) -> tuple[str, list[str] | None]:
     return cleaned, facts
 
 
+def _known_facts_reconcile_message() -> str:
+    """Generic reminder to consolidate reusable facts before more recon."""
+    return (
+        "Before making more tool calls, reconcile what you already know from bootstrap and the "
+        "latest tool results. If any settled, reusable facts were learned, update the "
+        "<known_facts>...</known_facts> block in your next normal reply before asking for more "
+        "recon. Do not re-query a tool for a fact you already have unless you first state the "
+        "specific ambiguity or missing detail."
+    )
+
+
 def _usage_add(a: dict[str, int], b: dict[str, int]) -> dict[str, int]:
     out = dict(a)
     for k, v in b.items():
@@ -637,10 +648,13 @@ class AutoPwnAgent:
                     "but if bootstrap provides those values, reuse them. "
                     "If bootstrap includes `ghidra_decompile` with ok=true, treat that pseudocode "
                     "as primary source for control flow before writing exploits. "
-                    "If you want to refresh the known-facts summary, include a "
-                    "<known_facts>...</known_facts> block in your normal reply with one "
-                    "bullet-style fact per line. Only include settled, reusable facts; omit the "
-                    "block when nothing needs updating. "
+                    "Whenever bootstrap or a tool result settles reusable facts, update the "
+                    "<known_facts>...</known_facts> block in your next normal reply with one "
+                    "bullet-style fact per line before asking for more recon. Only include "
+                    "settled, reusable facts; omit the block when nothing needs updating. "
+                    "Do not re-query tools for facts already present in bootstrap, recent tool "
+                    "results, or the known-facts summary unless you first state the unresolved "
+                    "ambiguity. "
                     "On static binaries, avoid broad "
                     "`elf_symbols(symbol_type='all', symbol_scope='all')` unless you need "
                     "runtime/libc/compiler symbols for a specific reason; prefer the default "
@@ -779,6 +793,10 @@ class AutoPwnAgent:
                 )
 
             if tool_use_blocks:
+                updated_known_facts_this_turn = any(
+                    block.type == "text" and _extract_known_facts_block(block.text)[1] is not None
+                    for block in assistant_content
+                )
                 messages.append({"role": "assistant", "content": assistant_content})
                 tool_results = []
 
@@ -849,6 +867,13 @@ class AutoPwnAgent:
                     })
 
                 messages.append({"role": "user", "content": tool_results})
+                if not updated_known_facts_this_turn:
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": _known_facts_reconcile_message(),
+                        }
+                    )
                 current_head_messages = base_head_messages + (
                     1 if known_facts_index is not None else 0
                 )

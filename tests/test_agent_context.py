@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from types import SimpleNamespace
 
 import pytest
 from click.testing import CliRunner
@@ -178,6 +179,16 @@ def test_extract_known_facts_block_returns_none_when_absent() -> None:
     assert facts is None
 
 
+def test_known_facts_reconcile_message_pushes_agent_to_reuse_existing_facts() -> None:
+    from agent.core import _known_facts_reconcile_message
+
+    msg = _known_facts_reconcile_message()
+    assert "bootstrap" in msg
+    assert "latest tool results" in msg
+    assert "<known_facts>...</known_facts>" in msg
+    assert "Do not re-query a tool" in msg
+
+
 def test_merge_known_facts_deduplicates_and_caps() -> None:
     from agent.core import _merge_known_facts
 
@@ -275,3 +286,58 @@ def test_cli_verbose_flag_wires_into_agent(monkeypatch: pytest.MonkeyPatch, tmp_
     assert captured["verbose"] is True
     assert captured["binary_path"] == os.path.abspath(str(binary_path))
     assert captured["user_context"] == "hello"
+
+
+def test_solve_injects_known_facts_reconcile_reminder_after_tool_round_without_block(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from agent.core import AutoPwnAgent
+
+    binary_path = tmp_path / "fake.bin"
+    binary_path.write_bytes(b"\x7fELF")
+
+    seen_messages: list[list[dict]] = []
+
+    class FakeMessagesAPI:
+        def __init__(self):
+            self.calls = 0
+
+        def create(self, **kwargs):
+            self.calls += 1
+            seen_messages.append(kwargs["messages"])
+            if self.calls == 1:
+                return SimpleNamespace(
+                    content=[
+                        SimpleNamespace(type="text", text="Let me inspect mitigations."),
+                        SimpleNamespace(
+                            type="tool_use",
+                            id="toolu_1",
+                            name="checksec",
+                            input={"binary_path": str(binary_path)},
+                        ),
+                    ],
+                    stop_reason="tool_use",
+                    usage={},
+                )
+            return SimpleNamespace(
+                content=[SimpleNamespace(type="text", text="Done.")],
+                stop_reason="end_turn",
+                usage={},
+            )
+
+    class FakeClient:
+        def __init__(self, api_key=None):
+            self.messages = FakeMessagesAPI()
+
+    monkeypatch.setattr("agent.core.anthropic.Anthropic", FakeClient)
+    monkeypatch.setattr("agent.core._call_tool", lambda name, arguments: {"pie": False})
+    monkeypatch.setenv("PWN_AGENT_BOOTSTRAP_GHIDRA", "0")
+
+    agent = AutoPwnAgent(max_iterations=2, api_key="test")
+    agent.solve(str(binary_path))
+
+    second_call_messages = seen_messages[1]
+    assert any(
+        isinstance(m.get("content"), str) and "Before making more tool calls" in m["content"]
+        for m in second_call_messages
+    )
