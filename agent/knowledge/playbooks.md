@@ -29,6 +29,16 @@
 5. **If `system@plt` exists but no `/bin/sh`**: use `rop_write_string_and_call_payload` to stage `/bin/sh` into `.bss` via `gets`/`read`.
 6. Validate shell: send `id`, collect with `recvrepeat(1.5)`, check for `uid=`.
 
+### Static i386, no `/bin/sh`
+
+1. Use `elf_symbols(..., symbol_type="objects")`, `gdb_vmmap`, or bootstrap runtime info to pick a writable `.bss`/RW target.
+2. Search gadgets in this order:
+   - `rop_gadgets(binary_path)` for the common pack
+   - `rop_gadgets(search="mov")` and prefer memory-write gadgets like `mov byte ptr [edx], al ; ... ; ret` or `mov dword ptr [eax + off], edx ; ret`
+   - `rop_gadgets(search="pop eax")`, `pop ebx`, `pop ecx`, `pop edx`, and `int 0x80`
+3. If `/bin/sh` is missing, do not stall on symbol search. Stage the string into writable memory, then use `execve`.
+4. If the overflow is through `argv[1]`, remember the first-stage payload cannot contain NUL bytes. Prefer null-free staging or multi-step chains.
+
 ### Shellcode (NX off)
 
 1. `checksec` → NX false

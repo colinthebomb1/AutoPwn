@@ -23,6 +23,62 @@ class TestGDBFindOffset:
         assert "registers" in result
         assert isinstance(result["registers"], dict)
 
+    def test_finds_offset_on_i386_via_eip(self, monkeypatch):
+        from pwn import context, cyclic
+        from agent.mcp_servers.dynamic_analysis import server as gdb_server_mod
+
+        context.arch = "i386"
+        pat = cyclic(40)
+        eip_int = int.from_bytes(pat[8:12], "little")
+        eip_val = hex(eip_int)
+
+        class FakeSession:
+            def start(self, path): pass
+            def run_with_stdin(self, data, timeout=None):
+                return "Program received signal SIGSEGV"
+            def command(self, cmd, timeout=None):
+                if "info registers" in cmd:
+                    return f"eip {eip_val}\nebp 0x00000000"
+                return ""
+            def close(self): pass
+
+        monkeypatch.setattr(gdb_server_mod, "_resolve_binary", lambda p: p)
+        monkeypatch.setattr(gdb_server_mod, "_get_session", lambda: FakeSession())
+        monkeypatch.setattr(gdb_server_mod, "_gdb_arch_context", lambda path: ("i386", "eip", "esp", "ebp"))
+
+        result = gdb_server_mod.gdb_find_offset("/tmp/fake", pattern_length=40)
+        assert result["offset"] == 8
+        assert result["signal"] == "SIGSEGV"
+
+    def test_finds_offset_on_i386_via_ebp_uses_ptr_size_4(self, monkeypatch):
+        from pwn import context, cyclic
+        from agent.mcp_servers.dynamic_analysis import server as gdb_server_mod
+
+        context.arch = "i386"
+        pat = cyclic(40)
+        ebp_int = int.from_bytes(pat[8:12], "little")
+        ebp_val = hex(ebp_int)
+
+        class FakeSession:
+            def start(self, path): pass
+            def run_with_stdin(self, data, timeout=None):
+                return "Program received signal SIGSEGV"
+            def command(self, cmd, timeout=None):
+                if "info registers" in cmd:
+                    return f"eip 0xdeadbeef\nebp {ebp_val}"
+                if cmd == "backtrace":
+                    return ""
+                return ""
+            def close(self): pass
+
+        monkeypatch.setattr(gdb_server_mod, "_resolve_binary", lambda p: p)
+        monkeypatch.setattr(gdb_server_mod, "_get_session", lambda: FakeSession())
+        monkeypatch.setattr(gdb_server_mod, "_gdb_arch_context", lambda path: ("i386", "eip", "esp", "ebp"))
+
+        result = gdb_server_mod.gdb_find_offset("/tmp/fake", pattern_length=40)
+        # EBP matches at offset 8; return addr = 8 + ptr_size(4) = 12
+        assert result["offset"] == 12
+
 
 class TestGDBRun:
     def test_normal_exit(self, ret2win_binary):

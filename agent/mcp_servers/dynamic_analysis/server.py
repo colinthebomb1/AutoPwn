@@ -57,10 +57,12 @@ def _parse_registers(output: str) -> dict[str, str]:
     return regs
 
 
-def _registers_fallback(session) -> dict[str, str]:
+def _registers_fallback(session, ip_reg: str = "rip", sp_reg: str = "rsp") -> dict[str, str]:
     """When `info registers` layout differs (pwndbg/GDB versions), use print expressions."""
+    bp_reg = "ebp" if sp_reg == "esp" else "rbp"
+    ax_reg = "eax" if sp_reg == "esp" else "rax"
     regs: dict[str, str] = {}
-    for name in ("rip", "rsp", "rbp", "rax", "eip", "esp", "ebp", "eax"):
+    for name in (ip_reg, sp_reg, bp_reg, ax_reg):
         out = session.command(f"p/x ${name}")
         m = re.search(r"(0x[0-9a-fA-F]+)", out)
         if m:
@@ -110,6 +112,7 @@ def gdb_find_offset(binary_path: str, pattern_length: int = 300) -> dict:
     path = _resolve_binary(binary_path)
     arch, ip_reg, _, frame_reg = _gdb_arch_context(path)
     context.arch = arch
+    ptr_size = 4 if arch == "i386" else 8
     pattern = cyclic(pattern_length)
 
     session = _get_session()
@@ -167,7 +170,7 @@ def gdb_find_offset(binary_path: str, pattern_length: int = 300) -> dict:
             rbp_int = int(rbp_val, 16)
             found = cyclic_find(rbp_int & 0xFFFFFFFF)
             if found >= 0:
-                offset = found + 8
+                offset = found + ptr_size
                 crash_addr = rbp_val
         except (ValueError, TypeError):
             pass
@@ -239,7 +242,7 @@ def gdb_run(
         reg_output = session.command("info registers")
         regs = _parse_registers(reg_output)
         if not regs:
-            regs = _registers_fallback(session)
+            regs = _registers_fallback(session, ip_reg, sp_reg)
 
     # Check exit status
     exit_code = None
@@ -301,7 +304,7 @@ def gdb_breakpoint(
     reg_output = session.command("info registers")
     regs = _parse_registers(reg_output)
     if not regs:
-        regs = _registers_fallback(session)
+        regs = _registers_fallback(session, ip_reg, sp_reg)
 
     disasm = compact_gdb_transcript(session.command(f"x/12i ${ip_reg}"), max_chars=1200)
 
