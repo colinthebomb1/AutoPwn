@@ -352,7 +352,32 @@ def _usage_add(a: dict[str, int], b: dict[str, int]) -> dict[str, int]:
     return out
 
 
-def _format_usage_summary(u: dict[str, int]) -> str:
+# (input $/MTok, output $/MTok, cache_write $/MTok, cache_read $/MTok)
+_MODEL_PRICING: list[tuple[str, tuple[float, float, float, float]]] = [
+    ("claude-opus-4", (15.0, 75.0, 18.75, 1.50)),
+    ("claude-sonnet-4", (3.0, 15.0, 3.75, 0.30)),
+    ("claude-haiku-4-5", (0.80, 4.0, 1.00, 0.08)),
+    ("claude-haiku-4", (0.80, 4.0, 1.00, 0.08)),
+]
+
+
+def _estimate_cost(u: dict[str, int], model: str) -> float | None:
+    rates = None
+    for prefix, r in _MODEL_PRICING:
+        if prefix in model:
+            rates = r
+            break
+    if rates is None:
+        return None
+    inp_r, out_r, cw_r, cr_r = rates
+    inp = u.get("input_tokens", 0)
+    out = u.get("output_tokens", 0)
+    cwrite = u.get("cache_creation_input_tokens", 0)
+    cread = u.get("cache_read_input_tokens", 0)
+    return (inp * inp_r + out * out_r + cwrite * cw_r + cread * cr_r) / 1_000_000
+
+
+def _format_usage_summary(u: dict[str, int], model: str = "") -> str:
     if not u:
         return "usage: (unavailable)"
     inp = u.get("input_tokens", 0)
@@ -361,8 +386,11 @@ def _format_usage_summary(u: dict[str, int]) -> str:
     cread = u.get("cache_read_input_tokens", 0)
     parts = [f"in={inp}", f"out={out}"]
     if cwrite or cread:
-        parts.append(f"cache_write_in={cwrite}")
-        parts.append(f"cache_read_in={cread}")
+        parts.append(f"cache_write={cwrite}")
+        parts.append(f"cache_read={cread}")
+    cost = _estimate_cost(u, model)
+    if cost is not None:
+        parts.append(f"est. cost=${cost:.4f}")
     return "usage: " + ", ".join(parts)
 
 
@@ -534,40 +562,43 @@ class AutoPwnAgent:
         function_symbol_scope = _bootstrap_function_symbol_scope(checksec_res)
 
         # Run the four independent tool calls and two subcommands in parallel.
-        with ThreadPoolExecutor(max_workers=6) as pool:
-            f_funcs = pool.submit(
-                self._dispatcher.call_tool,
-                "elf_symbols",
-                {
-                    "binary_path": binary_path,
-                    "symbol_type": "functions",
-                    "symbol_scope": function_symbol_scope,
-                },
-            )
-            f_plt = pool.submit(
-                self._dispatcher.call_tool,
-                "elf_symbols",
-                {"binary_path": binary_path, "symbol_type": "plt"},
-            )
-            f_got = pool.submit(
-                self._dispatcher.call_tool,
-                "elf_symbols",
-                {"binary_path": binary_path, "symbol_type": "got"},
-            )
-            f_strings = pool.submit(
-                self._dispatcher.call_tool,
-                "strings_search",
-                {"binary_path": binary_path, "min_length": 4},
-            )
-            f_ldd = pool.submit(_safe_cmd, ["ldd", binary_path])
-            f_interp = pool.submit(_safe_cmd, ["readelf", "-l", binary_path])
+        with console.status(
+            "[dim]Bootstrap: analyzing binary (symbols, strings, ldd)...[/dim]", spinner="dots"
+        ):
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                f_funcs = pool.submit(
+                    self._dispatcher.call_tool,
+                    "elf_symbols",
+                    {
+                        "binary_path": binary_path,
+                        "symbol_type": "functions",
+                        "symbol_scope": function_symbol_scope,
+                    },
+                )
+                f_plt = pool.submit(
+                    self._dispatcher.call_tool,
+                    "elf_symbols",
+                    {"binary_path": binary_path, "symbol_type": "plt"},
+                )
+                f_got = pool.submit(
+                    self._dispatcher.call_tool,
+                    "elf_symbols",
+                    {"binary_path": binary_path, "symbol_type": "got"},
+                )
+                f_strings = pool.submit(
+                    self._dispatcher.call_tool,
+                    "strings_search",
+                    {"binary_path": binary_path, "min_length": 4},
+                )
+                f_ldd = pool.submit(_safe_cmd, ["ldd", binary_path])
+                f_interp = pool.submit(_safe_cmd, ["readelf", "-l", binary_path])
 
-        funcs_res = f_funcs.result()
-        plt_res = f_plt.result()
-        got_res = f_got.result()
-        strings_res = f_strings.result()
-        ldd_out = f_ldd.result()
-        interp_out = f_interp.result()
+            funcs_res = f_funcs.result()
+            plt_res = f_plt.result()
+            got_res = f_got.result()
+            strings_res = f_strings.result()
+            ldd_out = f_ldd.result()
+            interp_out = f_interp.result()
 
         runtime_libc_lines: list[str] = []
         runtime_loader: str | None = None
@@ -616,15 +647,16 @@ class AutoPwnAgent:
                 f"{len(ghidra_names)} functions ({names_preview}), "
                 f"timeout {timeout_s}s…[/dim]"
             )
-            ghidra_res = _safe_call(
-                "ghidra_decompile",
-                {
-                    "binary_path": binary_path,
-                    "functions": ghidra_names,
-                    "timeout": timeout_s,
-                    "max_chars_per_function": per_fn,
-                },
-            )
+            with console.status("[dim]Bootstrap: running Ghidra...[/dim]", spinner="dots"):
+                ghidra_res = _safe_call(
+                    "ghidra_decompile",
+                    {
+                        "binary_path": binary_path,
+                        "functions": ghidra_names,
+                        "timeout": timeout_s,
+                        "max_chars_per_function": per_fn,
+                    },
+                )
             if isinstance(ghidra_res, dict) and ghidra_res.get("ok"):
                 decompiled = list(ghidra_res.get("functions", {}).keys())
                 cache_info = ghidra_res.get("cache", {})
@@ -867,31 +899,32 @@ class AutoPwnAgent:
             # Anthropic sometimes returns 429/529 transient errors. Retry so the
             # agent doesn't crash mid-run and lose context.
             last_exc: Exception | None = None
-            for attempt in range(1, 6):
-                try:
-                    response = self.client.messages.create(
-                        model=self.model,
-                        max_tokens=_env_int("PWN_AGENT_MAX_OUTPUT_TOKENS", 3072),
-                        system=system_blocks,
-                        tools=tools,
-                        messages=messages,
-                    )
-                    last_exc = None
-                    break
-                except (
-                    anthropic._exceptions.OverloadedError,
-                    anthropic._exceptions.RateLimitError,
-                ) as e:
-                    last_exc = e
-                    if attempt >= 5:
+            with console.status("[bold green]Claude is thinking...[/bold green]", spinner="dots"):
+                for attempt in range(1, 6):
+                    try:
+                        response = self.client.messages.create(
+                            model=self.model,
+                            max_tokens=_env_int("PWN_AGENT_MAX_OUTPUT_TOKENS", 3072),
+                            system=system_blocks,
+                            tools=tools,
+                            messages=messages,
+                        )
+                        last_exc = None
                         break
-                    # Exponential backoff with small jitter.
-                    sleep_s = min(2**attempt, 20) + random.uniform(0, 0.75)
-                    console.print(
-                        "[dim]Anthropic busy (attempt "
-                        f"{attempt}/4). Sleeping {sleep_s:.1f}s...[/dim]"
-                    )
-                    time.sleep(sleep_s)
+                    except (
+                        anthropic._exceptions.OverloadedError,
+                        anthropic._exceptions.RateLimitError,
+                    ) as e:
+                        last_exc = e
+                        if attempt >= 5:
+                            break
+                        # Exponential backoff with small jitter.
+                        sleep_s = min(2**attempt, 20) + random.uniform(0, 0.75)
+                        console.print(
+                            "[dim]Anthropic busy (attempt "
+                            f"{attempt}/4). Sleeping {sleep_s:.1f}s...[/dim]"
+                        )
+                        time.sleep(sleep_s)
             if last_exc is not None:
                 raise last_exc
 
@@ -945,7 +978,7 @@ class AutoPwnAgent:
                 if self.verbose:
                     console.print(
                         Panel(
-                            _format_usage_summary(total_usage),
+                            _format_usage_summary(total_usage, self.model),
                             title="Tokens/Cache",
                             border_style="blue",
                         )
@@ -973,9 +1006,13 @@ class AutoPwnAgent:
 
                     self._display_tool_call(tool_name, tool_input)
 
-                    start = time.time()
-                    result = self._dispatcher.call_tool(tool_name, tool_input)
-                    elapsed = time.time() - start
+                    with console.status(
+                        f"[bold cyan]Running [bold]{tool_name}[/bold]...[/bold cyan]",
+                        spinner="dots",
+                    ):
+                        start = time.time()
+                        result = self._dispatcher.call_tool(tool_name, tool_input)
+                        elapsed = time.time() - start
 
                     call_record = {
                         "iteration": iteration,
@@ -1065,7 +1102,7 @@ class AutoPwnAgent:
         if self.verbose:
             console.print(
                 Panel(
-                    _format_usage_summary(total_usage),
+                    _format_usage_summary(total_usage, self.model),
                     title="Tokens/Cache",
                     border_style="blue",
                 )
@@ -1083,7 +1120,13 @@ class AutoPwnAgent:
         table.add_column("Value")
         for k, v in inputs.items():
             val_str = str(v)
-            if len(val_str) > 200:
+            if k == "script":
+                lines = val_str.splitlines()
+                if len(lines) > 40:
+                    val_str = "\n".join(lines[:40]) + f"\n... [{len(lines) - 40} more lines]"
+                elif len(val_str) > 2000:
+                    val_str = val_str[:2000] + "..."
+            elif len(val_str) > 200:
                 val_str = val_str[:200] + "..."
             table.add_row(k, val_str)
         console.print(table)
