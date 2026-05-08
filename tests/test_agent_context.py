@@ -31,6 +31,9 @@ def test_solve_bootstrap_calls_elf_symbols_with_name(
                 return []
             return {"ok": True}
 
+        def shutdown(self):
+            pass
+
     monkeypatch.setenv("PWN_AGENT_BOOTSTRAP_GHIDRA", "0")
 
     agent = AutoPwnAgent(max_iterations=0, api_key="test", _dispatcher=FakeDispatcher())
@@ -328,6 +331,9 @@ def test_solve_injects_known_facts_reconcile_reminder_after_tool_round_without_b
     class FakeDispatcher:
         def call_tool(self, name: str, arguments: dict):
             return {"pie": False}
+
+        def shutdown(self):
+            pass
 
     monkeypatch.setattr("agent.core.anthropic.Anthropic", FakeClient)
     monkeypatch.setenv("PWN_AGENT_BOOTSTRAP_GHIDRA", "0")

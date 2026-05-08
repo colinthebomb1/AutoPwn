@@ -127,29 +127,47 @@ class MCPDispatcher:
     # Public interface
     # ------------------------------------------------------------------
 
+    def _reset_session(self, module_key: str) -> None:
+        if module_key == "exploit":
+            with self._exploit_lock:
+                self._exploit = None
+        else:
+            with self._dynamic_lock:
+                self._dynamic = None
+
     def call_tool(self, name: str, arguments: dict) -> Any:
         module_key = TOOL_MODULE_MAP.get(name)
         if module_key is None:
             return {"error": f"Unknown tool: {name}"}
 
-        try:
-            if module_key == "exploit":
-                session = self._ensure_exploit()
-            else:
-                session = self._ensure_dynamic()
-        except Exception as e:
-            log.debug("MCP connect failed for %s: %s", name, e, exc_info=True)
-            return {"error": f"MCP connect error: {e}"}
+        for attempt in range(2):
+            try:
+                session = (
+                    self._ensure_exploit() if module_key == "exploit" else self._ensure_dynamic()
+                )
+            except Exception as e:
+                log.debug("MCP connect failed for %s: %s", name, e, exc_info=True)
+                return {"error": f"MCP connect error: {e}"}
 
-        try:
-            future = asyncio.run_coroutine_threadsafe(
-                session.call_tool(name, arguments), self._ensure_loop()
-            )
-            result = future.result(timeout=_CALL_TIMEOUT)
-            return _parse_result(result)
-        except Exception as e:
-            log.debug("Tool %s raised %s", name, type(e).__name__, exc_info=True)
-            return {"error": f"{type(e).__name__}: {e}"}
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    session.call_tool(name, arguments), self._ensure_loop()
+                )
+                result = future.result(timeout=_CALL_TIMEOUT)
+                return _parse_result(result)
+            except Exception as e:
+                if attempt == 0:
+                    log.debug(
+                        "Tool %s failed (%s), reconnecting and retrying",
+                        name,
+                        type(e).__name__,
+                    )
+                    self._reset_session(module_key)
+                    continue
+                log.debug("Tool %s raised %s", name, type(e).__name__, exc_info=True)
+                return {"error": f"{type(e).__name__}: {e}"}
+
+        return {"error": "unreachable"}
 
     def shutdown(self) -> None:
         async def _close() -> None:
@@ -175,3 +193,7 @@ class MCPDispatcher:
         self._loop.call_soon_threadsafe(self._loop.stop)
         if self._thread is not None:
             self._thread.join(timeout=5)
+        self._loop = None
+        self._thread = None
+        self._exploit = None
+        self._dynamic = None
