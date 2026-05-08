@@ -9,6 +9,7 @@ import random
 import re
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -531,19 +532,42 @@ class AutoPwnAgent:
 
         checksec_res = _safe_call("checksec", {"binary_path": binary_path})
         function_symbol_scope = _bootstrap_function_symbol_scope(checksec_res)
-        funcs_res = _safe_call(
-            "elf_symbols",
-            {
-                "binary_path": binary_path,
-                "symbol_type": "functions",
-                "symbol_scope": function_symbol_scope,
-            },
-        )
-        plt_res = _safe_call("elf_symbols", {"binary_path": binary_path, "symbol_type": "plt"})
-        got_res = _safe_call("elf_symbols", {"binary_path": binary_path, "symbol_type": "got"})
-        strings_res = _safe_call("strings_search", {"binary_path": binary_path, "min_length": 4})
-        ldd_out = _safe_cmd(["ldd", binary_path])
-        interp_out = _safe_cmd(["readelf", "-l", binary_path])
+
+        # Run the four independent tool calls and two subcommands in parallel.
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            f_funcs = pool.submit(
+                self._dispatcher.call_tool,
+                "elf_symbols",
+                {
+                    "binary_path": binary_path,
+                    "symbol_type": "functions",
+                    "symbol_scope": function_symbol_scope,
+                },
+            )
+            f_plt = pool.submit(
+                self._dispatcher.call_tool,
+                "elf_symbols",
+                {"binary_path": binary_path, "symbol_type": "plt"},
+            )
+            f_got = pool.submit(
+                self._dispatcher.call_tool,
+                "elf_symbols",
+                {"binary_path": binary_path, "symbol_type": "got"},
+            )
+            f_strings = pool.submit(
+                self._dispatcher.call_tool,
+                "strings_search",
+                {"binary_path": binary_path, "min_length": 4},
+            )
+            f_ldd = pool.submit(_safe_cmd, ["ldd", binary_path])
+            f_interp = pool.submit(_safe_cmd, ["readelf", "-l", binary_path])
+
+        funcs_res = f_funcs.result()
+        plt_res = f_plt.result()
+        got_res = f_got.result()
+        strings_res = f_strings.result()
+        ldd_out = f_ldd.result()
+        interp_out = f_interp.result()
 
         runtime_libc_lines: list[str] = []
         runtime_loader: str | None = None
@@ -695,6 +719,19 @@ class AutoPwnAgent:
                 success=False, summary=f"Binary not found: {binary_path}", iterations=0
             )
 
+        try:
+            return self._solve(binary_path, remote, user_context=user_context, fresh=fresh)
+        finally:
+            self._dispatcher.shutdown()
+
+    def _solve(
+        self,
+        binary_path: str,
+        remote: str | None = None,
+        *,
+        user_context: str | None = None,
+        fresh: bool = False,
+    ) -> AgentResult:
         panel_lines = f"[bold]Target:[/bold] {binary_path}"
         uc = (user_context or "").strip()
         if uc:
