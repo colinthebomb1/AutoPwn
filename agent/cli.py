@@ -89,6 +89,17 @@ def main(
     console.print()
     if result.success:
         console.print("[bold green]✓ Solve complete[/bold green]")
+        if result.exploit_result:
+            from agent.core import print_exploit_success_banner
+
+            final_path_for_banner = None
+            if result.exploit_script:
+                binary_name = os.path.splitext(os.path.basename(binary))[0]
+                exploits_dir = os.path.join(os.path.dirname(__file__), "..", "exploits")
+                final_path_for_banner = os.path.abspath(
+                    os.path.join(exploits_dir, f"solve_{binary_name}.py")
+                )
+            print_exploit_success_banner(result.exploit_result, final_path_for_banner)
         if result.exploit_script:
             # Save final exploit to a predictable path
             binary_name = os.path.splitext(os.path.basename(binary))[0]

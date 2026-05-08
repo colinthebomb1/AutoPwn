@@ -223,27 +223,23 @@ def _run_exploit_failure_hint(result: Any) -> str:
     return "\n[run_exploit recovery hint] " + " | ".join(hints)
 
 
-def _print_exploit_success_banner(result: dict, script_path: str | None) -> None:
-    stdout = str(result.get("stdout", "") or "").strip()
+def print_exploit_success_banner(result: dict, script_path: str | None) -> None:
     flags = result.get("flags_found") or []
     uid_line = result.get("uid_line")
 
     lines: list[str] = []
     if flags:
-        lines.append("[bold]Flags:[/bold] " + "  ".join(flags))
-    if uid_line:
+        lines.append("[bold]Flag:[/bold] " + "  ".join(flags))
+    elif uid_line:
         lines.append("[bold]Shell:[/bold] " + uid_line)
-    if stdout:
-        preview = stdout[-1500:] if len(stdout) > 1500 else stdout
-        lines.append("[bold]Output:[/bold]\n" + preview)
     if script_path:
-        lines.append(f"[bold]Exploit saved:[/bold] {script_path}")
+        lines.append(f"[bold]Exploit:[/bold] {script_path}")
 
     console.print(
         Panel(
             "\n".join(lines) if lines else "Exploit succeeded.",
-            title="[bold green] Exploit Succeeded [/bold green]",
-            border_style="green",
+            title="[bold cyan] Exploit Succeeded [/bold cyan]",
+            border_style="cyan",
         )
     )
 
@@ -539,6 +535,7 @@ class AgentResult:
     iterations: int
     exploit_script: str | None = None
     tool_calls: list[dict] = field(default_factory=list)
+    exploit_result: dict | None = None
 
 
 class AutoPwnAgent:
@@ -925,6 +922,7 @@ class AutoPwnAgent:
             all_tool_calls = []
             planner_injected = strategy_injected
             total_usage = {}
+            last_exploit_result: dict | None = None
 
         for iteration in range(resume_iter, self.max_iterations + 1):
             console.print(f"\n[dim]─── Iteration {iteration}/{self.max_iterations} ───[/dim]")
@@ -1023,6 +1021,7 @@ class AutoPwnAgent:
                     iterations=iteration,
                     exploit_script=last_script,
                     tool_calls=all_tool_calls,
+                    exploit_result=last_exploit_result,
                 )
 
             if tool_use_blocks:
@@ -1060,14 +1059,13 @@ class AutoPwnAgent:
 
                     if tool_name == "run_exploit":
                         script = tool_input.get("script")
-                        lp = None
                         if isinstance(script, str) and script.strip():
                             lp = _save_last_attempt_exploit(binary_path, script)
                             console.print(f"[dim]Latest exploit mirrored to {lp}[/dim]")
                         if isinstance(result, dict) and (
                             result.get("flag_detected") or result.get("shell_detected")
                         ):
-                            _print_exploit_success_banner(result, lp)
+                            last_exploit_result = result
 
                     suffix = ""
                     if (
