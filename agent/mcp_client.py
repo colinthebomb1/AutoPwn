@@ -71,9 +71,9 @@ class MCPDispatcher:
         self._thread: threading.Thread | None = None
         self._start_lock = threading.Lock()
 
-        # Each entry: (stdio_ctx, ClientSession) once connected, None before.
-        self._exploit: tuple[Any, ClientSession] | None = None
-        self._dynamic: tuple[Any, ClientSession] | None = None
+        # Each entry: (stdio_ctx, ClientSession, errlog) once connected, None before.
+        self._exploit: tuple[Any, ClientSession, Any] | None = None
+        self._dynamic: tuple[Any, ClientSession, Any] | None = None
         self._exploit_lock = threading.Lock()
         self._dynamic_lock = threading.Lock()
 
@@ -91,7 +91,7 @@ class MCPDispatcher:
     # Connection helpers
     # ------------------------------------------------------------------
 
-    async def _connect(self, module: str) -> tuple[Any, ClientSession]:
+    async def _connect(self, module: str) -> tuple[Any, ClientSession, Any]:
         params = StdioServerParameters(
             command=sys.executable,
             args=["-m", module],
@@ -103,7 +103,7 @@ class MCPDispatcher:
         session = ClientSession(read, write)
         await session.__aenter__()
         await session.initialize()
-        return ctx, session
+        return ctx, session, errlog
 
     def _ensure_exploit(self) -> ClientSession:
         loop = self._ensure_loop()
@@ -132,10 +132,17 @@ class MCPDispatcher:
     def _reset_session(self, module_key: str) -> None:
         if module_key == "exploit":
             with self._exploit_lock:
-                self._exploit = None
+                entry, self._exploit = self._exploit, None
         else:
             with self._dynamic_lock:
-                self._dynamic = None
+                entry, self._dynamic = self._dynamic, None
+        if entry is not None:
+            _, _, errlog = entry
+            if errlog is not sys.stderr:
+                try:
+                    errlog.close()
+                except Exception:
+                    pass
 
     def call_tool(self, name: str, arguments: dict) -> Any:
         module_key = TOOL_MODULE_MAP.get(name)
@@ -173,10 +180,10 @@ class MCPDispatcher:
 
     def shutdown(self) -> None:
         async def _close() -> None:
-            for ctx_session in (self._exploit, self._dynamic):
-                if ctx_session is None:
+            for entry in (self._exploit, self._dynamic):
+                if entry is None:
                     continue
-                ctx, session = ctx_session
+                ctx, session, _ = entry
                 try:
                     await session.__aexit__(None, None, None)
                 except Exception:
@@ -197,5 +204,13 @@ class MCPDispatcher:
             self._thread.join(timeout=5)
         self._loop = None
         self._thread = None
+        for entry in (self._exploit, self._dynamic):
+            if entry is not None:
+                _, _, errlog = entry
+                if errlog is not sys.stderr:
+                    try:
+                        errlog.close()
+                    except Exception:
+                        pass
         self._exploit = None
         self._dynamic = None
