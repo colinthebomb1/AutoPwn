@@ -25,6 +25,7 @@ class TestGDBFindOffset:
 
     def test_finds_offset_on_i386_via_eip(self, monkeypatch):
         from pwn import context, cyclic
+
         from agent.mcp_servers.dynamic_analysis import server as gdb_server_mod
 
         context.arch = "i386"
@@ -44,7 +45,9 @@ class TestGDBFindOffset:
 
         monkeypatch.setattr(gdb_server_mod, "_resolve_binary", lambda p: p)
         monkeypatch.setattr(gdb_server_mod, "_get_session", lambda: FakeSession())
-        monkeypatch.setattr(gdb_server_mod, "_gdb_arch_context", lambda path: ("i386", "eip", "esp", "ebp"))
+        monkeypatch.setattr(
+            gdb_server_mod, "_gdb_arch_context", lambda path: ("i386", "eip", "esp", "ebp")
+        )
 
         result = gdb_server_mod.gdb_find_offset("/tmp/fake", pattern_length=40)
         assert result["offset"] == 8
@@ -52,6 +55,7 @@ class TestGDBFindOffset:
 
     def test_finds_offset_on_i386_via_ebp_uses_ptr_size_4(self, monkeypatch):
         from pwn import context, cyclic
+
         from agent.mcp_servers.dynamic_analysis import server as gdb_server_mod
 
         context.arch = "i386"
@@ -73,7 +77,9 @@ class TestGDBFindOffset:
 
         monkeypatch.setattr(gdb_server_mod, "_resolve_binary", lambda p: p)
         monkeypatch.setattr(gdb_server_mod, "_get_session", lambda: FakeSession())
-        monkeypatch.setattr(gdb_server_mod, "_gdb_arch_context", lambda path: ("i386", "eip", "esp", "ebp"))
+        monkeypatch.setattr(
+            gdb_server_mod, "_gdb_arch_context", lambda path: ("i386", "eip", "esp", "ebp")
+        )
 
         result = gdb_server_mod.gdb_find_offset("/tmp/fake", pattern_length=40)
         # EBP matches at offset 8; return addr = 8 + ptr_size(4) = 12
