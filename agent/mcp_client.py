@@ -66,15 +66,25 @@ class MCPDispatcher:
     """Manages two persistent MCP subprocess connections and dispatches tool calls."""
 
     def __init__(self) -> None:
-        self._loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(target=self._loop.run_forever, daemon=True)
-        self._thread.start()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+        self._start_lock = threading.Lock()
 
         # Each entry: (stdio_ctx, ClientSession) once connected, None before.
         self._exploit: tuple[Any, ClientSession] | None = None
         self._dynamic: tuple[Any, ClientSession] | None = None
         self._exploit_lock = threading.Lock()
         self._dynamic_lock = threading.Lock()
+
+    def _ensure_loop(self) -> asyncio.AbstractEventLoop:
+        with self._start_lock:
+            if self._loop is None:
+                self._loop = asyncio.new_event_loop()
+                self._thread = threading.Thread(
+                    target=self._loop.run_forever, daemon=True
+                )
+                self._thread.start()
+        return self._loop
 
     # ------------------------------------------------------------------
     # Connection helpers
@@ -94,19 +104,21 @@ class MCPDispatcher:
         return ctx, session
 
     def _ensure_exploit(self) -> ClientSession:
+        loop = self._ensure_loop()
         with self._exploit_lock:
             if self._exploit is None:
                 future = asyncio.run_coroutine_threadsafe(
-                    self._connect(_EXPLOIT_MODULE), self._loop
+                    self._connect(_EXPLOIT_MODULE), loop
                 )
                 self._exploit = future.result(timeout=30)
         return self._exploit[1]
 
     def _ensure_dynamic(self) -> ClientSession:
+        loop = self._ensure_loop()
         with self._dynamic_lock:
             if self._dynamic is None:
                 future = asyncio.run_coroutine_threadsafe(
-                    self._connect(_DYNAMIC_MODULE), self._loop
+                    self._connect(_DYNAMIC_MODULE), loop
                 )
                 self._dynamic = future.result(timeout=30)
         return self._dynamic[1]
@@ -131,7 +143,7 @@ class MCPDispatcher:
 
         try:
             future = asyncio.run_coroutine_threadsafe(
-                session.call_tool(name, arguments), self._loop
+                session.call_tool(name, arguments), self._ensure_loop()
             )
             result = future.result(timeout=_CALL_TIMEOUT)
             return _parse_result(result)
@@ -154,9 +166,12 @@ class MCPDispatcher:
                 except Exception:
                     pass
 
+        if self._loop is None:
+            return
         try:
             asyncio.run_coroutine_threadsafe(_close(), self._loop).result(timeout=10)
         except Exception:
             pass
         self._loop.call_soon_threadsafe(self._loop.stop)
-        self._thread.join(timeout=5)
+        if self._thread is not None:
+            self._thread.join(timeout=5)
