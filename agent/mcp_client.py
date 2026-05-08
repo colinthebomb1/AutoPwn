@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
 import os
@@ -65,7 +66,8 @@ def _parse_result(result: Any) -> Any:
 class MCPDispatcher:
     """Manages two persistent MCP subprocess connections and dispatches tool calls."""
 
-    def __init__(self) -> None:
+    def __init__(self, verbose: bool = False) -> None:
+        self._verbose = verbose
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._start_lock = threading.Lock()
@@ -96,7 +98,8 @@ class MCPDispatcher:
             args=["-m", module],
             env=_server_env(),
         )
-        ctx = stdio_client(params)
+        errlog = sys.stderr if self._verbose else io.StringIO()
+        ctx = stdio_client(params, errlog=errlog)
         read, write = await ctx.__aenter__()
         session = ClientSession(read, write)
         await session.__aenter__()

@@ -531,7 +531,9 @@ class AutoPwnAgent:
         )
         self.client = anthropic.Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY"))
         self.verbose = verbose
-        self._dispatcher = _dispatcher if _dispatcher is not None else MCPDispatcher()
+        self._dispatcher = (
+            _dispatcher if _dispatcher is not None else MCPDispatcher(verbose=verbose)
+        )
 
     def _run_bootstrap(self, binary_path: str) -> str:
         """Run cheap local analysis tools and optional Ghidra before the ReAct loop.
