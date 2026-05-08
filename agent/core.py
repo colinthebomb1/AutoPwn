@@ -223,6 +223,31 @@ def _run_exploit_failure_hint(result: Any) -> str:
     return "\n[run_exploit recovery hint] " + " | ".join(hints)
 
 
+def _print_exploit_success_banner(result: dict, script_path: str | None) -> None:
+    stdout = str(result.get("stdout", "") or "").strip()
+    flags = result.get("flags_found") or []
+    uid_line = result.get("uid_line")
+
+    lines: list[str] = []
+    if flags:
+        lines.append("[bold]Flags:[/bold] " + "  ".join(flags))
+    if uid_line:
+        lines.append("[bold]Shell:[/bold] " + uid_line)
+    if stdout:
+        preview = stdout[-1500:] if len(stdout) > 1500 else stdout
+        lines.append("[bold]Output:[/bold]\n" + preview)
+    if script_path:
+        lines.append(f"[bold]Exploit saved:[/bold] {script_path}")
+
+    console.print(
+        Panel(
+            "\n".join(lines) if lines else "Exploit succeeded.",
+            title="[bold green] Exploit Succeeded [/bold green]",
+            border_style="green",
+        )
+    )
+
+
 def _usage_to_dict(usage: Any) -> dict[str, int]:
     """Normalize Anthropic usage object/dict to a dict of ints."""
     if usage is None:
@@ -560,23 +585,13 @@ class AutoPwnAgent:
             except Exception:
                 return None
 
-        checksec_res = _safe_call("checksec", {"binary_path": binary_path})
-        function_symbol_scope = _bootstrap_function_symbol_scope(checksec_res)
-
-        # Run the four independent tool calls and two subcommands in parallel.
+        # Run checksec and all independent tool calls in parallel.
         with console.status(
-            "[dim]Bootstrap: analyzing binary (symbols, strings, ldd)...[/dim]", spinner="dots"
+            "[dim]Bootstrap: analyzing binary (checksec, symbols, strings, ldd)...[/dim]",
+            spinner="dots",
         ):
-            with ThreadPoolExecutor(max_workers=6) as pool:
-                f_funcs = pool.submit(
-                    self._dispatcher.call_tool,
-                    "elf_symbols",
-                    {
-                        "binary_path": binary_path,
-                        "symbol_type": "functions",
-                        "symbol_scope": function_symbol_scope,
-                    },
-                )
+            with ThreadPoolExecutor(max_workers=7) as pool:
+                f_checksec = pool.submit(_safe_call, "checksec", {"binary_path": binary_path})
                 f_plt = pool.submit(
                     self._dispatcher.call_tool,
                     "elf_symbols",
@@ -595,6 +610,22 @@ class AutoPwnAgent:
                 f_ldd = pool.submit(_safe_cmd, ["ldd", binary_path])
                 f_interp = pool.submit(_safe_cmd, ["readelf", "-l", binary_path])
 
+                # elf_symbols(functions) depends on checksec → scope; wrap so it
+                # waits internally while the other five tasks run in parallel.
+                def _submit_functions() -> Any:
+                    scope = _bootstrap_function_symbol_scope(f_checksec.result())
+                    return self._dispatcher.call_tool(
+                        "elf_symbols",
+                        {
+                            "binary_path": binary_path,
+                            "symbol_type": "functions",
+                            "symbol_scope": scope,
+                        },
+                    )
+
+                f_funcs = pool.submit(_submit_functions)
+
+            checksec_res = f_checksec.result()
             funcs_res = f_funcs.result()
             plt_res = f_plt.result()
             got_res = f_got.result()
@@ -1029,9 +1060,14 @@ class AutoPwnAgent:
 
                     if tool_name == "run_exploit":
                         script = tool_input.get("script")
+                        lp = None
                         if isinstance(script, str) and script.strip():
                             lp = _save_last_attempt_exploit(binary_path, script)
                             console.print(f"[dim]Latest exploit mirrored to {lp}[/dim]")
+                        if isinstance(result, dict) and (
+                            result.get("flag_detected") or result.get("shell_detected")
+                        ):
+                            _print_exploit_success_banner(result, lp)
 
                     suffix = ""
                     if (
