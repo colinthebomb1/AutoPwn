@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import json
 import logging
 import os
@@ -98,7 +97,7 @@ class MCPDispatcher:
             args=["-m", module],
             env=_server_env(),
         )
-        errlog = sys.stderr if self._verbose else io.StringIO()
+        errlog = sys.stderr if self._verbose else open(os.devnull, "w")  # noqa: WPS515
         ctx = stdio_client(params, errlog=errlog)
         read, write = await ctx.__aenter__()
         session = ClientSession(read, write)
