@@ -11,7 +11,7 @@ import threading
 from typing import Any
 
 from mcp import ClientSession
-from mcp.client.stdio import stdio_client, StdioServerParameters
+from mcp.client.stdio import StdioServerParameters, stdio_client
 
 from agent.tools import TOOL_MODULE_MAP
 
@@ -36,6 +36,8 @@ def _server_env() -> dict[str, str]:
         if any(key.startswith(p) for p in _PASSTHROUGH_PREFIXES):
             env[key] = value
     return env
+
+
 _DYNAMIC_MODULE = "agent.mcp_servers.dynamic_analysis.server"
 
 # Per-call timeout (seconds). Ghidra can take several minutes; run_exploit has its own
