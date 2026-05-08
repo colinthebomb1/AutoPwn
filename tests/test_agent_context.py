@@ -20,20 +20,20 @@ def test_solve_bootstrap_calls_elf_symbols_with_name(
 
     tool_calls: list[tuple[str, dict]] = []
 
-    def fake_call_tool(name: str, arguments: dict):
-        tool_calls.append((name, arguments))
-        if name == "checksec":
-            return {"pie": False, "runpath": None, "rpath": None}
-        if name == "elf_symbols":
-            return {"functions": {"main": "0x401000"}}
-        if name == "strings_search":
-            return []
-        return {"ok": True}
+    class FakeDispatcher:
+        def call_tool(self, name: str, arguments: dict):
+            tool_calls.append((name, arguments))
+            if name == "checksec":
+                return {"pie": False, "runpath": None, "rpath": None}
+            if name == "elf_symbols":
+                return {"functions": {"main": "0x401000"}}
+            if name == "strings_search":
+                return []
+            return {"ok": True}
 
-    monkeypatch.setattr("agent.core._call_tool", fake_call_tool)
     monkeypatch.setenv("PWN_AGENT_BOOTSTRAP_GHIDRA", "0")
 
-    agent = AutoPwnAgent(max_iterations=0, api_key="test")
+    agent = AutoPwnAgent(max_iterations=0, api_key="test", _dispatcher=FakeDispatcher())
     result = agent.solve(str(binary_path))
 
     assert result.success is False
@@ -325,11 +325,14 @@ def test_solve_injects_known_facts_reconcile_reminder_after_tool_round_without_b
         def __init__(self, api_key=None):
             self.messages = FakeMessagesAPI()
 
+    class FakeDispatcher:
+        def call_tool(self, name: str, arguments: dict):
+            return {"pie": False}
+
     monkeypatch.setattr("agent.core.anthropic.Anthropic", FakeClient)
-    monkeypatch.setattr("agent.core._call_tool", lambda name, arguments: {"pie": False})
     monkeypatch.setenv("PWN_AGENT_BOOTSTRAP_GHIDRA", "0")
 
-    agent = AutoPwnAgent(max_iterations=2, api_key="test")
+    agent = AutoPwnAgent(max_iterations=2, api_key="test", _dispatcher=FakeDispatcher())
     agent.solve(str(binary_path))
 
     second_call_messages = seen_messages[1]

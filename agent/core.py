@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 import json
 import logging
 import os
@@ -18,9 +17,10 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from agent.mcp_client import MCPDispatcher
 from agent.planner import plan_from_checksec
 from agent.prompts import get_system_prompt
-from agent.tools import TOOL_MODULE_MAP, TOOL_REGISTRY
+from agent.tools import TOOL_REGISTRY
 
 log = logging.getLogger(__name__)
 console = Console()
@@ -142,12 +142,20 @@ def _trim_conversation(messages: list[dict], *, head_messages: int = 2) -> None:
     ):
         return
     kept_tail = tail[-max_tail:]
+    # Snap forward to the first assistant message so we never start
+    # with an orphaned tool_result that has no preceding tool_use.
+    while kept_tail and kept_tail[0]["role"] != "assistant":
+        kept_tail = kept_tail[1:]
     while kept_tail and (
         sum(_estimated_message_chars(m) for m in head)
         + sum(_estimated_message_chars(m) for m in kept_tail)
         > max_chars
     ):
-        del kept_tail[:2]
+        # Remove one complete turn: the leading assistant message plus all
+        # immediately following user messages (tool_results + reconcile).
+        del kept_tail[0]
+        while kept_tail and kept_tail[0]["role"] == "user":
+            del kept_tail[0]
     messages[:] = head + kept_tail
 
 
@@ -466,51 +474,6 @@ def _save_last_attempt_exploit(binary_path: str, script: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Tool modules — loaded lazily from packaged MCP server modules
-# ---------------------------------------------------------------------------
-
-_exploit_mod = None
-_dynamic_mod = None
-
-
-def _get_exploit_module():
-    global _exploit_mod
-    if _exploit_mod is None:
-        _exploit_mod = importlib.import_module("agent.mcp_servers.exploit_tools.server")
-    return _exploit_mod
-
-
-def _get_dynamic_module():
-    global _dynamic_mod
-    if _dynamic_mod is None:
-        _dynamic_mod = importlib.import_module("agent.mcp_servers.dynamic_analysis.server")
-    return _dynamic_mod
-
-
-def _call_tool(name: str, arguments: dict) -> Any:
-    """Dispatch a tool call to the appropriate MCP server module."""
-    module_key = TOOL_MODULE_MAP.get(name)
-    if module_key is None:
-        return {"error": f"Unknown tool: {name}"}
-
-    if module_key == "exploit":
-        mod = _get_exploit_module()
-    elif module_key == "dynamic":
-        mod = _get_dynamic_module()
-    else:
-        return {"error": f"Unknown module: {module_key}"}
-
-    func = getattr(mod, name, None)
-    if func is None:
-        return {"error": f"Tool {name} not found in {module_key} module"}
-    try:
-        return func(**arguments)
-    except Exception as e:
-        log.debug("Tool %s raised %s", name, type(e).__name__, exc_info=True)
-        return {"error": f"{type(e).__name__}: {e}"}
-
-
-# ---------------------------------------------------------------------------
 # Agent
 # ---------------------------------------------------------------------------
 
@@ -531,6 +494,7 @@ class AutoPwnAgent:
         max_iterations: int | None = None,
         api_key: str | None = None,
         verbose: bool = False,
+        _dispatcher: MCPDispatcher | None = None,
     ):
         self.model = model
         self.max_iterations = (
@@ -538,6 +502,7 @@ class AutoPwnAgent:
         )
         self.client = anthropic.Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY"))
         self.verbose = verbose
+        self._dispatcher = _dispatcher if _dispatcher is not None else MCPDispatcher()
 
     def _run_bootstrap(self, binary_path: str) -> str:
         """Run cheap local analysis tools and optional Ghidra before the ReAct loop.
@@ -548,7 +513,7 @@ class AutoPwnAgent:
 
         def _safe_call(name: str, args: dict) -> Any:
             try:
-                return _call_tool(name, args)
+                return self._dispatcher.call_tool(name, args)
             except Exception as e:
                 return {"error": f"{type(e).__name__}: {e}"}
 
@@ -972,7 +937,7 @@ class AutoPwnAgent:
                     self._display_tool_call(tool_name, tool_input)
 
                     start = time.time()
-                    result = _call_tool(tool_name, tool_input)
+                    result = self._dispatcher.call_tool(tool_name, tool_input)
                     elapsed = time.time() - start
 
                     call_record = {

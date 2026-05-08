@@ -39,4 +39,7 @@ tests/challenges/heap_tcache_poison_x64
 .idea/
 .codex
 
+# Claude Code local config
+CLAUDE.md
+
 .gdb_history
