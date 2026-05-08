@@ -14,7 +14,6 @@ def test_core_imports_packaged_mcp_servers() -> None:
 
 def test_packaged_ghidra_script_is_bundled() -> None:
     script = (
-        resources.files("agent.mcp_servers.exploit_tools.ghidra_scripts")
-        / "DecompileFunctions.py"
+        resources.files("agent.mcp_servers.exploit_tools.ghidra_scripts") / "DecompileFunctions.py"
     )
     assert script.is_file()

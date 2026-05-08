@@ -34,14 +34,19 @@ class TestGDBFindOffset:
         eip_val = hex(eip_int)
 
         class FakeSession:
-            def start(self, path): pass
+            def start(self, path):
+                pass
+
             def run_with_stdin(self, data, timeout=None):
                 return "Program received signal SIGSEGV"
+
             def command(self, cmd, timeout=None):
                 if "info registers" in cmd:
                     return f"eip {eip_val}\nebp 0x00000000"
                 return ""
-            def close(self): pass
+
+            def close(self):
+                pass
 
         monkeypatch.setattr(gdb_server_mod, "_resolve_binary", lambda p: p)
         monkeypatch.setattr(gdb_server_mod, "_get_session", lambda: FakeSession())
@@ -64,16 +69,21 @@ class TestGDBFindOffset:
         ebp_val = hex(ebp_int)
 
         class FakeSession:
-            def start(self, path): pass
+            def start(self, path):
+                pass
+
             def run_with_stdin(self, data, timeout=None):
                 return "Program received signal SIGSEGV"
+
             def command(self, cmd, timeout=None):
                 if "info registers" in cmd:
                     return f"eip 0xdeadbeef\nebp {ebp_val}"
                 if cmd == "backtrace":
                     return ""
                 return ""
-            def close(self): pass
+
+            def close(self):
+                pass
 
         monkeypatch.setattr(gdb_server_mod, "_resolve_binary", lambda p: p)
         monkeypatch.setattr(gdb_server_mod, "_get_session", lambda: FakeSession())

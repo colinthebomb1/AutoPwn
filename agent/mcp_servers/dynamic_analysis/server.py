@@ -33,7 +33,7 @@ def _get_session() -> GDBSession:
 
 
 def _resolve_binary(path: str) -> str:
-    resolved = os.path.abspath(os.path.expanduser(path))
+    resolved = os.path.abspath(path)
     if not os.path.isfile(resolved):
         raise FileNotFoundError(f"Binary not found: {resolved}")
     return resolved
@@ -92,6 +92,7 @@ def _gdb_command_failed(output: str) -> bool:
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
+
 
 @mcp.tool()
 def gdb_find_offset(binary_path: str, pattern_length: int = 300) -> dict:

@@ -1,4 +1,5 @@
 """System prompt assembly for the AutoPwn agent."""
+
 from pathlib import Path
 
 

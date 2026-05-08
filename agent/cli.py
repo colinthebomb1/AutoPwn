@@ -42,6 +42,12 @@ console = Console()
     is_flag=True,
     help="Show verbose debugging output such as known-fact updates and token/cache analytics.",
 )
+@click.option(
+    "--fresh",
+    is_flag=True,
+    default=False,
+    help="Ignore any existing checkpoint and start from scratch.",
+)
 def main(
     binary: str,
     remote: str | None,
@@ -50,6 +56,7 @@ def main(
     notes: str | None,
     notes_file: str | None,
     verbose: bool,
+    fresh: bool,
 ) -> None:
     """AutoPwn — Agentic binary exploitation powered by LLMs and MCP tools."""
     load_dotenv()
@@ -77,7 +84,7 @@ def main(
         api_key=api_key,
         verbose=verbose,
     )
-    result = agent.solve(binary_path=binary, remote=remote, user_context=user_context)
+    result = agent.solve(binary_path=binary, remote=remote, user_context=user_context, fresh=fresh)
 
     console.print()
     if result.success:
@@ -94,6 +101,7 @@ def main(
             console.print(f"\n[bold]Final exploit saved to:[/bold] {os.path.abspath(final_path)}")
             console.print()
             from rich.syntax import Syntax
+
             console.print(Syntax(result.exploit_script, "python", theme="monokai"))
     else:
         console.print("[bold red]✗ Solve failed[/bold red]")
@@ -104,8 +112,7 @@ def main(
             console.print(f"[dim]Latest run_exploit script (if any): {last_path}[/dim]")
 
     console.print(
-        f"\n[dim]Iterations: {result.iterations} | "
-        f"Tool calls: {len(result.tool_calls)}[/dim]"
+        f"\n[dim]Iterations: {result.iterations} | Tool calls: {len(result.tool_calls)}[/dim]"
     )
 
 

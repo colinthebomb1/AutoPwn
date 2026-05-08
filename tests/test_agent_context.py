@@ -140,13 +140,9 @@ def test_bootstrap_function_symbol_scope_prefers_user_for_static_binaries() -> N
     from agent.core import _bootstrap_function_symbol_scope
 
     assert (
-        _bootstrap_function_symbol_scope({"pie": False, "runpath": None, "rpath": None})
-        == "user"
+        _bootstrap_function_symbol_scope({"pie": False, "runpath": None, "rpath": None}) == "user"
     )
-    assert (
-        _bootstrap_function_symbol_scope({"pie": True, "runpath": None, "rpath": None})
-        == "all"
-    )
+    assert _bootstrap_function_symbol_scope({"pie": True, "runpath": None, "rpath": None}) == "all"
     assert (
         _bootstrap_function_symbol_scope({"pie": False, "runpath": "/tmp/lib", "rpath": None})
         == "all"
@@ -268,7 +264,7 @@ def test_cli_verbose_flag_wires_into_agent(monkeypatch: pytest.MonkeyPatch, tmp_
             captured["api_key"] = api_key
             captured["verbose"] = verbose
 
-        def solve(self, binary_path, remote=None, user_context=None):
+        def solve(self, binary_path, remote=None, user_context=None, fresh=False):
             from agent.core import AgentResult
 
             captured["binary_path"] = binary_path

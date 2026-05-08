@@ -92,7 +92,10 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
                     "type": "string",
                     "description": "Optional filter string (e.g. 'pop rdi', 'ret'). If omitted, returns the common gadget pack.",
                 },
-                "max_results": {"type": "integer", "description": "Max gadgets to return. Default 128."},
+                "max_results": {
+                    "type": "integer",
+                    "description": "Max gadgets to return. Default 128.",
+                },
             },
             "required": ["binary_path"],
         },
@@ -107,8 +110,14 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
                     "enum": ["generate", "find"],
                     "description": "'generate' to create a pattern, 'find' to locate offset of a crash value.",
                 },
-                "length": {"type": "integer", "description": "Pattern length in bytes (for generate). Default 200."},
-                "value": {"type": "string", "description": "Hex value to find (for find action), e.g. '0x61616168'."},
+                "length": {
+                    "type": "integer",
+                    "description": "Pattern length in bytes (for generate). Default 200.",
+                },
+                "value": {
+                    "type": "string",
+                    "description": "Hex value to find (for find action), e.g. '0x61616168'.",
+                },
             },
             "required": ["action"],
         },
@@ -119,7 +128,10 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
             "type": "object",
             "properties": {
                 "binary_path": {"type": "string", "description": "Path to the ELF binary"},
-                "min_length": {"type": "integer", "description": "Minimum string length. Default 4."},
+                "min_length": {
+                    "type": "integer",
+                    "description": "Minimum string length. Default 4.",
+                },
                 "encoding": {
                     "type": "string",
                     "enum": ["ascii", "unicode"],
@@ -177,8 +189,14 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
             "type": "object",
             "properties": {
                 "libc_path": {"type": "string", "description": "Path to libc shared object."},
-                "leaked_symbol": {"type": "string", "description": "Leaked symbol name, e.g. puts."},
-                "leaked_address": {"type": "string", "description": "Leaked runtime address as hex/int string."},
+                "leaked_symbol": {
+                    "type": "string",
+                    "description": "Leaked symbol name, e.g. puts.",
+                },
+                "leaked_address": {
+                    "type": "string",
+                    "description": "Leaked runtime address as hex/int string.",
+                },
             },
             "required": ["libc_path", "leaked_symbol", "leaked_address"],
         },
@@ -189,8 +207,14 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
             "type": "object",
             "properties": {
                 "binary_path": {"type": "string", "description": "Target PIE ELF path."},
-                "leaked_symbol": {"type": "string", "description": "Symbol name you leaked (e.g. 'main')."},
-                "leaked_address": {"type": "string", "description": "Leaked runtime address as hex/int string."},
+                "leaked_symbol": {
+                    "type": "string",
+                    "description": "Symbol name you leaked (e.g. 'main').",
+                },
+                "leaked_address": {
+                    "type": "string",
+                    "description": "Leaked runtime address as hex/int string.",
+                },
             },
             "required": ["binary_path", "leaked_symbol", "leaked_address"],
         },
@@ -202,12 +226,30 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
             "properties": {
                 "binary_path": {"type": "string", "description": "Target ELF path."},
                 "offset": {"type": "integer", "description": "Overflow offset to saved RIP."},
-                "leak_symbol": {"type": "string", "description": "Imported symbol to leak. Default puts."},
-                "reentry_symbol": {"type": "string", "description": "Symbol to return to after leak. Default main."},
-                "pie_base": {"type": "string", "description": "Optional PIE base as hex/int string. If omitted, treated as 0."},
-                "canary": {"type": "string", "description": "Optional leaked stack canary as hex/int string (e.g. 0xdeadbeef...)."},
-                "canary_offset": {"type": "integer", "description": "Byte offset from input start to canary slot (required if canary is provided)."},
-                "saved_rbp": {"type": "string", "description": "Optional saved RBP value to place after canary. Default 0x0."},
+                "leak_symbol": {
+                    "type": "string",
+                    "description": "Imported symbol to leak. Default puts.",
+                },
+                "reentry_symbol": {
+                    "type": "string",
+                    "description": "Symbol to return to after leak. Default main.",
+                },
+                "pie_base": {
+                    "type": "string",
+                    "description": "Optional PIE base as hex/int string. If omitted, treated as 0.",
+                },
+                "canary": {
+                    "type": "string",
+                    "description": "Optional leaked stack canary as hex/int string (e.g. 0xdeadbeef...).",
+                },
+                "canary_offset": {
+                    "type": "integer",
+                    "description": "Byte offset from input start to canary slot (required if canary is provided).",
+                },
+                "saved_rbp": {
+                    "type": "string",
+                    "description": "Optional saved RBP value to place after canary. Default 0x0.",
+                },
             },
             "required": ["binary_path", "offset"],
         },
@@ -220,12 +262,30 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
                 "binary_path": {"type": "string", "description": "Target ELF path."},
                 "libc_path": {"type": "string", "description": "Libc path used by target."},
                 "offset": {"type": "integer", "description": "Overflow offset to saved RIP."},
-                "leaked_symbol": {"type": "string", "description": "Symbol name used for base calc (e.g. puts)."},
-                "leaked_address": {"type": "string", "description": "Leaked runtime address as hex/int string."},
-                "pie_base": {"type": "string", "description": "Optional PIE base as hex/int string. If omitted, treated as 0."},
-                "canary": {"type": "string", "description": "Optional leaked stack canary as hex/int string (e.g. 0xdeadbeef...)."},
-                "canary_offset": {"type": "integer", "description": "Byte offset from input start to canary slot (required if canary is provided)."},
-                "saved_rbp": {"type": "string", "description": "Optional saved RBP value to place after canary. Default 0x0."},
+                "leaked_symbol": {
+                    "type": "string",
+                    "description": "Symbol name used for base calc (e.g. puts).",
+                },
+                "leaked_address": {
+                    "type": "string",
+                    "description": "Leaked runtime address as hex/int string.",
+                },
+                "pie_base": {
+                    "type": "string",
+                    "description": "Optional PIE base as hex/int string. If omitted, treated as 0.",
+                },
+                "canary": {
+                    "type": "string",
+                    "description": "Optional leaked stack canary as hex/int string (e.g. 0xdeadbeef...).",
+                },
+                "canary_offset": {
+                    "type": "integer",
+                    "description": "Byte offset from input start to canary slot (required if canary is provided).",
+                },
+                "saved_rbp": {
+                    "type": "string",
+                    "description": "Optional saved RBP value to place after canary. Default 0x0.",
+                },
             },
             "required": ["binary_path", "libc_path", "offset", "leaked_symbol", "leaked_address"],
         },
@@ -336,13 +396,22 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         "input_schema": {
             "type": "object",
             "properties": {
-                "script": {"type": "string", "description": "The pwntools exploit script as a Python string."},
-                "binary_path": {"type": "string", "description": "Path to target binary (optional, set as BINARY env var)."},
+                "script": {
+                    "type": "string",
+                    "description": "The pwntools exploit script as a Python string.",
+                },
+                "binary_path": {
+                    "type": "string",
+                    "description": "Path to target binary (optional, set as BINARY env var).",
+                },
                 "timeout": {
                     "type": "integer",
                     "description": "Execution timeout in seconds. Default 30.",
                 },
-                "save_script": {"type": "boolean", "description": "Set true to save the script under /exploits. Default false."},
+                "save_script": {
+                    "type": "boolean",
+                    "description": "Set true to save the script under /exploits. Default false.",
+                },
             },
             "required": ["script"],
         },
@@ -354,7 +423,10 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
             "type": "object",
             "properties": {
                 "binary_path": {"type": "string", "description": "Path to the ELF binary"},
-                "pattern_length": {"type": "integer", "description": "Length of cyclic pattern. Default 300."},
+                "pattern_length": {
+                    "type": "integer",
+                    "description": "Length of cyclic pattern. Default 300.",
+                },
             },
             "required": ["binary_path"],
         },
@@ -377,7 +449,10 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
             "type": "object",
             "properties": {
                 "binary_path": {"type": "string", "description": "Path to the ELF binary"},
-                "address": {"type": "string", "description": "Breakpoint address (hex like '0x401234' or symbol like 'vuln')."},
+                "address": {
+                    "type": "string",
+                    "description": "Breakpoint address (hex like '0x401234' or symbol like 'vuln').",
+                },
                 "stdin_data": {"type": "string", "description": "Optional stdin data."},
                 "commands": {
                     "type": "array",
@@ -394,11 +469,23 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
             "type": "object",
             "properties": {
                 "binary_path": {"type": "string", "description": "Path to the ELF binary"},
-                "address": {"type": "string", "description": "Memory address to examine (hex or $register)."},
-                "count": {"type": "integer", "description": "Number of units to display. Default 16."},
-                "format": {"type": "string", "description": "GDB format (e.g. 'gx' for giant hex, 'wx' for word hex, 's' for string). Default 'gx'."},
+                "address": {
+                    "type": "string",
+                    "description": "Memory address to examine (hex or $register).",
+                },
+                "count": {
+                    "type": "integer",
+                    "description": "Number of units to display. Default 16.",
+                },
+                "format": {
+                    "type": "string",
+                    "description": "GDB format (e.g. 'gx' for giant hex, 'wx' for word hex, 's' for string). Default 'gx'.",
+                },
                 "stdin_data": {"type": "string", "description": "Optional stdin data."},
-                "break_at": {"type": "string", "description": "Optional breakpoint to set before running."},
+                "break_at": {
+                    "type": "string",
+                    "description": "Optional breakpoint to set before running.",
+                },
             },
             "required": ["binary_path", "address"],
         },
@@ -420,9 +507,15 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
             "type": "object",
             "properties": {
                 "binary_path": {"type": "string", "description": "Path to the ELF binary"},
-                "count": {"type": "integer", "description": "Number of 8-byte words to dump. Default 32."},
+                "count": {
+                    "type": "integer",
+                    "description": "Number of 8-byte words to dump. Default 32.",
+                },
                 "stdin_data": {"type": "string", "description": "Optional stdin data."},
-                "break_at": {"type": "string", "description": "Optional breakpoint (address or symbol)."},
+                "break_at": {
+                    "type": "string",
+                    "description": "Optional breakpoint (address or symbol).",
+                },
             },
             "required": ["binary_path"],
         },
