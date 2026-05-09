@@ -93,3 +93,39 @@ class TestPlanFromChecksec:
             result = plan_from_checksec(checksec)
             assert len(result.suggested_tools) > 0
             assert "elf_symbols" in result.suggested_tools
+
+    # --- heap detection --------------------------------------------------
+
+    _HEAP_CHECKSEC = {"canary": False, "nx": True, "pie": False, "relro": "Partial", "bits": 64}
+
+    def test_heap_detected_via_func_names(self):
+        result = plan_from_checksec(
+            self._HEAP_CHECKSEC,
+            func_names=["do_alloc", "do_free", "do_edit", "do_show", "main"],
+        )
+        assert result.name == "heap"
+        assert "heap_safe_link" in result.suggested_tools
+        assert any("tcache" in h or "fastbin" in h for h in result.technique_hints)
+
+    def test_heap_detected_via_strings(self):
+        result = plan_from_checksec(
+            self._HEAP_CHECKSEC,
+            strings=["fake_chunk at 0x404060", "1) alloc  2) free  3) edit", "chunk at %p"],
+        )
+        assert result.name == "heap"
+
+    def test_heap_not_falsely_triggered(self):
+        # Single keyword in func names should not trigger heap classification.
+        result = plan_from_checksec(
+            self._HEAP_CHECKSEC,
+            func_names=["main", "vuln", "win"],
+        )
+        assert result.name == "rop"
+
+    def test_heap_overrides_rop_classification(self):
+        # Same mitigations as a ROP binary, but heap functions present → heap wins.
+        result = plan_from_checksec(
+            {"canary": False, "nx": True, "pie": False, "relro": "Partial", "bits": 64},
+            func_names=["main", "do_alloc", "do_free", "do_edit"],
+        )
+        assert result.name == "heap"

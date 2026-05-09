@@ -26,11 +26,21 @@ The host may **drop older chat turns** to limit API spend. If you need a prior G
 - Show reasoning at each step. Explain vulnerabilities before exploiting.
 - Use pwntools idioms (ELF(), ROP(), p64()).
 - If an exploit fails, analyze WHY before retrying.
+- **Never remove a constraint observed from decompilation** (e.g. freed_flag check in do_edit, size limits, guard conditions) from known facts unless you have re-decompiled and the constraint is genuinely gone. Decompilation is ground truth. If a simpler exploit path is blocked by a decompiled check, that is the intended hardening — use the technique that bypasses it, not a workaround that ignores it.
 - For `gdb_breakpoint`, stdin must actually drive execution to the target function.
 - On interactive menu binaries, prefer prompt-synchronized `run_exploit` over static stdin.
 - When `rop_write_string_and_call_payload` returns a chain, trust its default writable address unless tool output gives a stronger named target.
 - `rop_gadgets(search="system")` is a category error: gadget search is for instruction sequences, not ELF symbols.
 - For `mov` searches, prefer gadgets that write to memory (`mov byte ptr [...]`, `mov dword ptr [...]`) over scalar register moves like `mov al, imm`.
+
+## Heap exploitation rules (MANDATORY)
+
+1. **Safe-link formula in exploit scripts:** `encoded_fd = (chunk_user_ptr >> 12) ^ target_user_ptr`. Write this inline in Python — chunk addresses are dynamic (ASLR) so the encoded value cannot be pre-computed. The `heap_safe_link` MCP tool is for verification only; it is NOT importable in exploit scripts.
+2. **`target_user_ptr` = `fake_chunk_addr + 0x10`.** The chunk header is at `fake_chunk_addr`; `malloc` returns user pointer = header + 0x10. Using header address or header+8 as target produces a wrong or crashing allocation.
+3. **For fastbin double-free, fill tcache FIRST.** Free 7 same-size chunks before attempting fastbin frees. If tcache is not full, your frees go to tcache, not fastbin, and the A→B→A chain never forms.
+4. **After poisoning A's fd, you need THREE more allocs to reach fake chunk** (alloc→B, alloc→A-again, alloc→fake chunk). Not two.
+5. **For heap overflow → tcache poison:** tcache count MUST be ≥ 2 before freeing the victim chunk B. Free a dummy same-size chunk first (count→1), then free B (count→2). If count=1 when you poison and pop B, count drops to 0 and the next alloc calls malloc() directly — you never reach the target. Consult the "Heap overflow → tcache poison" section in the playbooks for the exact numbered step sequence.
+6. Consult the relevant heap playbook section for the exact numbered step sequence before writing ANY heap exploit code (Fastbin double-free, Botcake, Heap overflow → tcache poison).
 
 ## Success Criteria
 
