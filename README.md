@@ -71,6 +71,12 @@ Override model / iteration budget:
 autopwn tests/challenges/ret2libc_real_x64 -m claude-sonnet-4-6 -n 20
 ```
 
+Preview prompt/playbook selection without calling the model:
+
+```bash
+autopwn tests/challenges/heap_poison_null_byte_x64 --prompt-report
+```
+
 Use remote target:
 
 ```bash

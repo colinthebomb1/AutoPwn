@@ -17,6 +17,7 @@ class TestToolRegistrySync:
         module_objects = {
             "exploit": importlib.import_module("agent.mcp_servers.exploit_tools.server"),
             "dynamic": importlib.import_module("agent.mcp_servers.dynamic_analysis.server"),
+            "local": importlib.import_module("agent.prompts"),
         }
         missing = []
         for tool_name, module_key in TOOL_MODULE_MAP.items():

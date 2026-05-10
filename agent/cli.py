@@ -53,6 +53,12 @@ console = Console()
     default=False,
     help="Ignore any existing checkpoint and start from scratch.",
 )
+@click.option(
+    "--prompt-report",
+    is_flag=True,
+    default=False,
+    help="Run bootstrap and print cached prompt/playbook sizes without calling the model.",
+)
 def main(
     binary: str,
     remote: str | None,
@@ -62,6 +68,7 @@ def main(
     notes_file: str | None,
     verbose: bool,
     fresh: bool,
+    prompt_report: bool,
 ) -> None:
     """AutoPwn — Agentic binary exploitation powered by LLMs and MCP tools."""
     load_dotenv()
@@ -89,6 +96,15 @@ def main(
         api_key=api_key,
         verbose=verbose,
     )
+    if prompt_report:
+        report = agent.prompt_report(
+            binary_path=binary,
+            remote=remote,
+            user_context=user_context,
+        )
+        console.print_json(data=report)
+        return
+
     result = agent.solve(binary_path=binary, remote=remote, user_context=user_context, fresh=fresh)
 
     console.print()
