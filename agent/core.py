@@ -25,6 +25,7 @@ from agent.tools import TOOL_REGISTRY
 
 log = logging.getLogger(__name__)
 console = Console()
+DEFAULT_MODEL = "claude-sonnet-4-6"
 
 # Strip Markdown inline-code spans with no real content (model often emits `` or ` `).
 _EMPTY_INLINE_CODE = re.compile(r"`[\t \u00a0\n]*`")
@@ -541,7 +542,7 @@ class AgentResult:
 class AutoPwnAgent:
     def __init__(
         self,
-        model: str = "claude-sonnet-4-20250514",
+        model: str = DEFAULT_MODEL,
         max_iterations: int | None = None,
         api_key: str | None = None,
         verbose: bool = False,

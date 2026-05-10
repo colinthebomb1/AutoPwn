@@ -106,6 +106,7 @@ class TestPlanFromChecksec:
         assert result.name == "heap"
         assert "heap_safe_link" in result.suggested_tools
         assert any("tcache" in h or "fastbin" in h for h in result.technique_hints)
+        assert "poison_null_byte" in result.technique_hints
 
     def test_heap_detected_via_strings(self):
         result = plan_from_checksec(
@@ -129,3 +130,23 @@ class TestPlanFromChecksec:
             func_names=["main", "do_alloc", "do_free", "do_edit"],
         )
         assert result.name == "heap"
+
+    def test_heap_full_relro_suggests_fsop(self):
+        result = plan_from_checksec(
+            {"canary": False, "nx": True, "pie": False, "relro": "Full", "bits": 64},
+            func_names=["do_alloc", "do_free", "do_edit", "do_show", "get_shell"],
+        )
+        assert result.name == "heap"
+        assert "libc_fsop_targets" in result.suggested_tools
+        assert "house_of_apple2" in result.technique_hints
+        assert "fsop" in result.technique_hints
+
+    def test_heap_partial_relro_no_fsop_hint(self):
+        result = plan_from_checksec(
+            {"canary": False, "nx": True, "pie": False, "relro": "Partial", "bits": 64},
+            func_names=["do_alloc", "do_free", "do_edit", "do_show"],
+        )
+        assert result.name == "heap"
+        assert "libc_fsop_targets" not in result.suggested_tools
+        assert "house_of_apple2" not in result.technique_hints
+        assert "fsop" not in result.technique_hints

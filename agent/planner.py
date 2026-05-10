@@ -48,21 +48,34 @@ def plan_from_checksec(
     relro = checksec_result.get("relro", "No RELRO")
 
     if _looks_like_heap(func_names, strings):
+        suggested_tools = ["elf_symbols", "strings_search", "heap_safe_link", "gdb_run"]
+        technique_hints = [
+            "tcache_poison",
+            "fastbin_dup",
+            "house_of_botcake",
+            "heap_overflow_tcache_poison",
+            "poison_null_byte",
+            "house_of_einherjar",
+        ]
+        description = (
+            "Heap challenge detected (menu-driven alloc/free/edit) — "
+            "identify bug class (UAF, double-free, overflow) from source/decompilation, "
+            "check glibc version for tcache/fastbin behaviour, "
+            "use heap_safe_link to encode fd pointers."
+        )
+        if relro == "Full":
+            suggested_tools.insert(-1, "libc_fsop_targets")
+            technique_hints += ["house_of_apple2", "fsop"]
+            description += (
+                " Full RELRO: GOT is read-only — prefer FSOP (House of Apple 2) "
+                "via _IO_list_all corruption when binary calls exit(); resolve libc "
+                "FSOP targets instead of assuming a win function exists."
+            )
         return Strategy(
             name="heap",
-            description=(
-                "Heap challenge detected (menu-driven alloc/free/edit) — "
-                "identify bug class (UAF, double-free, overflow) from source/decompilation, "
-                "check glibc version for tcache/fastbin behaviour, "
-                "use heap_safe_link to encode fd pointers."
-            ),
-            suggested_tools=["elf_symbols", "strings_search", "heap_safe_link", "gdb_run"],
-            technique_hints=[
-                "tcache_poison",
-                "fastbin_dup",
-                "house_of_botcake",
-                "heap_overflow_tcache_poison",
-            ],
+            description=description,
+            suggested_tools=suggested_tools,
+            technique_hints=technique_hints,
         )
 
     techniques: list[str] = []

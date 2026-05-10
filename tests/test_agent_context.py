@@ -287,6 +287,35 @@ def test_cli_verbose_flag_wires_into_agent(monkeypatch: pytest.MonkeyPatch, tmp_
     assert captured["user_context"] == "hello"
 
 
+def test_cli_uses_model_name_env_when_model_omitted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from agent import cli
+
+    binary_path = tmp_path / "fake.bin"
+    binary_path.write_bytes(b"\x7fELF")
+
+    captured = {}
+
+    class FakeAgent:
+        def __init__(self, model, max_iterations, api_key, verbose):
+            captured["model"] = model
+
+        def solve(self, binary_path, remote=None, user_context=None, fresh=False):
+            from agent.core import AgentResult
+
+            return AgentResult(success=False, summary="x", iterations=0, tool_calls=[])
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("MODEL_NAME", "claude-test-model")
+    monkeypatch.setattr("agent.core.AutoPwnAgent", FakeAgent)
+
+    result = CliRunner().invoke(cli.main, [str(binary_path)])
+
+    assert result.exit_code == 0
+    assert captured["model"] == "claude-test-model"
+
+
 def test_solve_injects_known_facts_reconcile_reminder_after_tool_round_without_block(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:

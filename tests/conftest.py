@@ -88,3 +88,18 @@ def heap_botcake_binary() -> str:
 @pytest.fixture
 def heap_overflow_binary() -> str:
     return _compile_if_missing("heap_overflow_x64")
+
+
+@pytest.fixture
+def heap_poison_null_byte_binary() -> str:
+    return _compile_if_missing("heap_poison_null_byte_x64")
+
+
+@pytest.fixture
+def heap_apple2_binary() -> str:
+    return _compile_if_missing("heap_apple2_x64")
+
+
+@pytest.fixture
+def heap_apple2_hard_binary() -> str:
+    return _compile_if_missing("heap_apple2_hard_x64")

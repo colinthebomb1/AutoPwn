@@ -15,7 +15,12 @@ console = Console()
 @click.command()
 @click.argument("binary", type=click.Path(exists=True))
 @click.option("--remote", "-r", default=None, help="Remote target as host:port")
-@click.option("--model", "-m", default="claude-sonnet-4-20250514", help="Anthropic model to use")
+@click.option(
+    "--model",
+    "-m",
+    default=None,
+    help="Anthropic model to use (default: env MODEL_NAME, else latest Claude Sonnet)",
+)
 @click.option(
     "--max-iterations",
     "-n",
@@ -51,7 +56,7 @@ console = Console()
 def main(
     binary: str,
     remote: str | None,
-    model: str,
+    model: str | None,
     max_iterations: int | None,
     notes: str | None,
     notes_file: str | None,
@@ -69,7 +74,7 @@ def main(
         )
         sys.exit(1)
 
-    from agent.core import AutoPwnAgent
+    from agent.core import DEFAULT_MODEL, AutoPwnAgent
 
     user_context: str | None = None
     if notes_file:
@@ -79,7 +84,7 @@ def main(
         user_context = notes
 
     agent = AutoPwnAgent(
-        model=model,
+        model=model or os.environ.get("MODEL_NAME") or DEFAULT_MODEL,
         max_iterations=max_iterations,
         api_key=api_key,
         verbose=verbose,
