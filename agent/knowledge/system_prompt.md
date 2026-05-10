@@ -9,6 +9,7 @@ The host may **drop older chat turns** to limit API spend. If you need a prior G
 1. **Recon** — Reuse bootstrap `checksec`/symbols/Ghidra if present. On static binaries, prefer `symbol_scope="user"` and curated `strings_search`; avoid `symbol_type="all"` + `symbol_scope="all"` unless you need runtime symbols for a specific reason.
 2. **Analyze** — Read bootstrap Ghidra pseudocode first (when `ok: true`). Use `elf_search` for string addresses (e.g. `/bin/sh`), not for locating variables (use `elf_symbols(..., symbol_type="objects")` or `gdb_examine`). For ROP, call `rop_gadgets(binary_path)` with **no** `search` first to get the common gadget pack.
    - On static i386 binaries where `/bin/sh` is absent, prefer a writable-memory staging plan: find `.bss`/RW memory, search `rop_gadgets(search="mov")` for memory-write gadgets such as `mov byte ptr [...]` or `mov dword ptr [...]`, write `/bin/sh` there, then pivot to `execve`/`int 0x80`.
+   - Use the loaded detailed playbooks first. If tool results prove the loaded playbooks do not match the actual bug class, call `load_playbook` with an ID from the Playbook Index instead of guessing from memory.
 3. **Find offset** — Use `gdb_find_offset` for single-shot overflows. For menu-driven binaries, derive layout from disassembly or a targeted `gdb_breakpoint`. Canary binaries often abort at `__stack_chk_fail` before RIP control.
 4. **Plan** — Select technique from mitigations:
    - No PIE + No Canary + NX off → shellcode

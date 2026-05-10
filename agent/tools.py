@@ -6,6 +6,7 @@ from typing import Any
 
 # Maps tool name → which module provides it
 TOOL_MODULE_MAP: dict[str, str] = {
+    "load_playbook": "local",
     "checksec": "exploit",
     "elf_symbols": "exploit",
     "elf_search": "exploit",
@@ -33,6 +34,34 @@ TOOL_MODULE_MAP: dict[str, str] = {
 
 
 TOOL_REGISTRY: dict[str, dict[str, Any]] = {
+    "load_playbook": {
+        "description": "Load one detailed CTF exploitation playbook by ID when the preloaded playbooks do not match new evidence.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "playbook_id": {
+                    "type": "string",
+                    "enum": [
+                        "stack_layout",
+                        "ret2win",
+                        "ret2libc",
+                        "static_i386",
+                        "shellcode",
+                        "format_string",
+                        "canary",
+                        "heap_tcache",
+                        "heap_botcake",
+                        "heap_overflow_tcache",
+                        "heap_poison_null_byte",
+                        "heap_apple2_fsop",
+                        "gdb_dynamic",
+                    ],
+                    "description": "Playbook ID from the Playbook Index.",
+                },
+            },
+            "required": ["playbook_id"],
+        },
+    },
     # --- Exploit tools ---
     "checksec": {
         "description": "Identify mitigations (RELRO, Canary, NX, PIE) for a binary.",

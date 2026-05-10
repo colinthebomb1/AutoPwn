@@ -242,14 +242,55 @@ def test_display_known_facts_prints_panel(monkeypatch: pytest.MonkeyPatch) -> No
     assert printed
 
 
-def test_get_system_prompt_uses_consolidated_files() -> None:
+def test_get_system_prompt_uses_base_prompt_and_playbook_index() -> None:
     from agent.prompts import get_system_prompt
 
     prompt = get_system_prompt()
 
     assert "You are AutoPwn, an expert binary exploitation agent." in prompt
-    assert "## Technique Playbooks" in prompt
+    assert "## Playbook Index" in prompt
+    assert "heap_apple2_fsop" in prompt
+    assert "## Loaded Detailed Playbooks" not in prompt
     assert "Pwn knowledge base (operator notes)" not in prompt
+
+
+def test_get_system_prompt_can_include_selected_playbook() -> None:
+    from agent.prompts import get_system_prompt
+
+    prompt = get_system_prompt(["heap_poison_null_byte"])
+
+    assert "## Loaded Detailed Playbooks" in prompt
+    assert "Poison null byte / House of Einherjar" in prompt
+    assert "House of Apple 2" not in prompt.split("<!-- playbook:heap_poison_null_byte -->", 1)[1]
+
+
+def test_select_playbooks_heap_full_relro_prefers_fsop() -> None:
+    from agent.planner import Strategy
+    from agent.prompts import select_playbooks
+
+    selected = select_playbooks(
+        binary_path="heap_apple2_hard_x64",
+        checksec={"relro": "Full", "nx": True, "pie": False},
+        strategy=Strategy(
+            name="heap",
+            description="",
+            suggested_tools=[],
+            technique_hints=["house_of_apple2", "fsop"],
+        ),
+        func_names=["do_alloc", "do_free", "do_edit", "do_show"],
+        strings=["chunk at %p"],
+    )
+
+    assert selected == ["heap_tcache", "heap_apple2_fsop"]
+
+
+def test_load_playbook_unknown_returns_available_ids() -> None:
+    from agent.prompts import load_playbook
+
+    result = load_playbook("not_real")
+
+    assert "error" in result
+    assert "heap_tcache" in result["available"]
 
 
 def test_cli_verbose_flag_wires_into_agent(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
@@ -314,6 +355,35 @@ def test_cli_uses_model_name_env_when_model_omitted(
 
     assert result.exit_code == 0
     assert captured["model"] == "claude-test-model"
+
+
+def test_cli_prompt_report_skips_solve(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    from agent import cli
+
+    binary_path = tmp_path / "fake.bin"
+    binary_path.write_bytes(b"\x7fELF")
+
+    captured = {}
+
+    class FakeAgent:
+        def __init__(self, model, max_iterations, api_key, verbose):
+            pass
+
+        def prompt_report(self, binary_path, remote=None, user_context=None):
+            captured["binary_path"] = binary_path
+            return {"selected_playbooks": ["heap_tcache"], "system_chars": 123}
+
+        def solve(self, *args, **kwargs):
+            raise AssertionError("solve should not be called for --prompt-report")
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr("agent.core.AutoPwnAgent", FakeAgent)
+
+    result = CliRunner().invoke(cli.main, [str(binary_path), "--prompt-report"])
+
+    assert result.exit_code == 0
+    assert captured["binary_path"] == os.path.abspath(str(binary_path))
+    assert '"heap_tcache"' in result.output
 
 
 def test_solve_injects_known_facts_reconcile_reminder_after_tool_round_without_block(

@@ -149,6 +149,13 @@ class MCPDispatcher:
         if module_key is None:
             return {"error": f"Unknown tool: {name}"}
 
+        if module_key == "local":
+            if name == "load_playbook":
+                from agent.prompts import load_playbook
+
+                return load_playbook(str(arguments.get("playbook_id", "")))
+            return {"error": f"Unknown local tool: {name}"}
+
         for attempt in range(2):
             try:
                 session = (

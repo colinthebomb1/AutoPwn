@@ -20,7 +20,12 @@ from rich.table import Table
 
 from agent.mcp_client import MCPDispatcher
 from agent.planner import plan_from_checksec
-from agent.prompts import get_system_prompt
+from agent.prompts import (
+    PLAYBOOKS,
+    get_base_system_prompt,
+    render_selected_playbooks,
+    select_playbooks,
+)
 from agent.tools import TOOL_REGISTRY
 
 log = logging.getLogger(__name__)
@@ -473,6 +478,7 @@ def _save_checkpoint(
     known_facts_insert_at: int,
     base_head_messages: int,
     planner_injected: bool,
+    selected_playbooks: list[str],
     total_usage: dict[str, int],
     all_tool_calls: list[dict],
 ) -> None:
@@ -484,6 +490,7 @@ def _save_checkpoint(
         "known_facts_insert_at": known_facts_insert_at,
         "base_head_messages": base_head_messages,
         "planner_injected": planner_injected,
+        "selected_playbooks": selected_playbooks,
         "total_usage": total_usage,
         "all_tool_calls": all_tool_calls,
     }
@@ -558,11 +565,11 @@ class AutoPwnAgent:
             _dispatcher if _dispatcher is not None else MCPDispatcher(verbose=verbose)
         )
 
-    def _run_bootstrap(self, binary_path: str) -> str:
+    def _run_bootstrap(self, binary_path: str) -> tuple[str, bool, list[str]]:
         """Run cheap local analysis tools and optional Ghidra before the ReAct loop.
 
-        Returns a JSON string injected as the bootstrap message so the agent can
-        reuse checksec/symbol/string/decompilation results without re-querying.
+        Returns bootstrap JSON, whether a strategy was computed, and selected
+        playbook IDs for cached prompt injection.
         """
 
         def _safe_call(name: str, args: dict) -> Any:
@@ -721,6 +728,14 @@ class AutoPwnAgent:
                 )
             )
 
+        selected_playbooks = select_playbooks(
+            binary_path=binary_path,
+            checksec=checksec_res if isinstance(checksec_res, dict) else None,
+            strategy=strategy,
+            func_names=list(func_addrs.keys()) if func_addrs else None,
+            strings=strings_res if isinstance(strings_res, list) else None,
+        )
+
         bootstrap = {
             "checksec": checksec_res,
             "main": main_addr,
@@ -749,6 +764,11 @@ class AutoPwnAgent:
             }
             if strategy
             else None,
+            "selected_playbooks": selected_playbooks,
+            "selected_playbooks_note": (
+                "Detailed playbooks with these IDs are already loaded in the cached "
+                "system prompt. If later evidence points elsewhere, call load_playbook."
+            ),
         }
         # Keep the injected message short enough to avoid token blowups; allow more when
         # Ghidra succeeded (decompilation is the main reason for a larger bootstrap).
@@ -760,7 +780,7 @@ class AutoPwnAgent:
         dumped = json.dumps(bootstrap, separators=(",", ":"), default=str)
         if len(dumped) > cap:
             dumped = dumped[:cap] + "\n... [bootstrap truncated]"
-        return dumped, strategy is not None
+        return dumped, strategy is not None, selected_playbooks
 
     def solve(
         self,
@@ -788,6 +808,105 @@ class AutoPwnAgent:
             return self._solve(binary_path, remote, user_context=user_context, fresh=fresh)
         finally:
             self._dispatcher.shutdown()
+
+    def prompt_report(
+        self,
+        binary_path: str,
+        remote: str | None = None,
+        *,
+        user_context: str | None = None,
+    ) -> dict[str, Any]:
+        """Build bootstrap + prompt blocks without calling the model."""
+        binary_path = os.path.abspath(binary_path)
+        if not os.path.isfile(binary_path):
+            return {"error": f"Binary not found: {binary_path}"}
+        try:
+            from agent.mcp_servers.exploit_tools import server as exploit_server
+
+            checksec_res = exploit_server.checksec(binary_path)
+            scope = _bootstrap_function_symbol_scope(
+                checksec_res if isinstance(checksec_res, dict) else {}
+            )
+            funcs_res = exploit_server.elf_symbols(
+                binary_path,
+                symbol_type="functions",
+                symbol_scope=scope,
+            )
+            strings_res = exploit_server.strings_search(
+                binary_path,
+                min_length=4,
+            )
+            func_addrs = funcs_res.get("functions", {}) if isinstance(funcs_res, dict) else {}
+            strings_list = strings_res if isinstance(strings_res, list) else None
+            strategy = (
+                plan_from_checksec(
+                    checksec_res,
+                    func_names=list(func_addrs.keys()) if func_addrs else None,
+                    strings=strings_list,
+                )
+                if isinstance(checksec_res, dict) and "error" not in checksec_res
+                else None
+            )
+            selected_playbooks = select_playbooks(
+                binary_path=binary_path,
+                checksec=checksec_res if isinstance(checksec_res, dict) else None,
+                strategy=strategy,
+                func_names=list(func_addrs.keys()) if func_addrs else None,
+                strings=strings_list,
+            )
+            system_blocks = self._build_system_blocks(remote, selected_playbooks)
+            system_chars = sum(len(str(block.get("text", ""))) for block in system_blocks)
+            legacy_chars = len(get_base_system_prompt()) + len(
+                render_selected_playbooks(list(PLAYBOOKS))
+            )
+            return {
+                "binary": binary_path,
+                "strategy": {
+                    "name": strategy.name,
+                    "technique_hints": strategy.technique_hints,
+                }
+                if strategy
+                else None,
+                "selected_playbooks": selected_playbooks,
+                "system_block_count": len(system_blocks),
+                "system_chars": system_chars,
+                "legacy_all_playbooks_system_chars": legacy_chars,
+                "estimated_system_char_savings": max(0, legacy_chars - system_chars),
+                "system_block_chars": [len(str(block.get("text", ""))) for block in system_blocks],
+                "user_context_chars": len((user_context or "").strip()),
+            }
+        finally:
+            self._dispatcher.shutdown()
+
+    def _build_system_blocks(
+        self,
+        remote: str | None,
+        selected_playbooks: list[str],
+    ) -> list[dict[str, Any]]:
+        system = get_base_system_prompt()
+        if remote:
+            parts = remote.rsplit(":", 1)
+            if len(parts) == 2 and parts[1].isdigit():
+                host, port = parts
+                system += f"\n\nRemote target: {host}:{port}"
+
+        system_blocks: list[dict[str, Any]] = [
+            {
+                "type": "text",
+                "text": system,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
+        playbooks = render_selected_playbooks(selected_playbooks)
+        if playbooks:
+            system_blocks.append(
+                {
+                    "type": "text",
+                    "text": playbooks,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            )
+        return system_blocks
 
     def _solve(
         self,
@@ -825,7 +944,6 @@ class AutoPwnAgent:
             for name, spec in TOOL_REGISTRY.items()
         ]
 
-        system = get_system_prompt()
         if remote:
             parts = remote.rsplit(":", 1)
             if len(parts) != 2 or not parts[1].isdigit():
@@ -834,18 +952,6 @@ class AutoPwnAgent:
                     summary=f"Invalid remote target {remote!r}: expected host:port or [ipv6]:port",
                     iterations=0,
                 )
-            host, port = parts
-            system += f"\n\nRemote target: {host}:{port}"
-
-        system_blocks: list[dict[str, Any]] = [
-            {
-                "type": "text",
-                "text": system,
-                # Anthropic prompt caching (ephemeral ~5 min TTL). Biggest win: the system prompt
-                # is reused across iterations in the ReAct loop.
-                "cache_control": {"type": "ephemeral"},
-            }
-        ]
 
         checkpoint_path = _checkpoint_path(binary_path)
         checkpoint = None if fresh else _load_checkpoint(checkpoint_path)
@@ -867,11 +973,13 @@ class AutoPwnAgent:
             known_facts_insert_at: int = checkpoint["known_facts_insert_at"]
             base_head_messages: int = checkpoint["base_head_messages"]
             planner_injected: bool = checkpoint["planner_injected"]
+            selected_playbooks: list[str] = checkpoint.get("selected_playbooks", [])
             total_usage: dict[str, int] = checkpoint["total_usage"]
             all_tool_calls: list[dict] = checkpoint["all_tool_calls"]
+            last_exploit_result: dict | None = None
         else:
             resume_iter = 1
-            bootstrap_msg, strategy_injected = self._run_bootstrap(binary_path)
+            bootstrap_msg, strategy_injected, selected_playbooks = self._run_bootstrap(binary_path)
 
             messages = [
                 {
@@ -926,6 +1034,8 @@ class AutoPwnAgent:
             planner_injected = strategy_injected
             total_usage = {}
             last_exploit_result: dict | None = None
+
+        system_blocks = self._build_system_blocks(remote, selected_playbooks)
 
         for iteration in range(resume_iter, self.max_iterations + 1):
             console.print(f"\n[dim]─── Iteration {iteration}/{self.max_iterations} ───[/dim]")
@@ -1131,6 +1241,7 @@ class AutoPwnAgent:
                 known_facts_insert_at=known_facts_insert_at,
                 base_head_messages=base_head_messages,
                 planner_injected=planner_injected,
+                selected_playbooks=selected_playbooks,
                 total_usage=total_usage,
                 all_tool_calls=all_tool_calls,
             )
