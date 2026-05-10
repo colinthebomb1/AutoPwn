@@ -46,6 +46,7 @@ Copy `.env.example` to `.env` and set at least:
 
 Optional knobs:
 
+- `MODEL_NAME` (default: `claude-sonnet-4-6`; use a dated model ID if you need to pin a snapshot)
 - `PWN_AGENT_MAX_ITERATIONS` (default: `30`)
 - `PWN_AGENT_CONTEXT_TURNS`
 - `PWN_AGENT_TOOL_RESULT_MAX`
@@ -67,7 +68,7 @@ autopwn tests/challenges/ret2win_x64
 Override model / iteration budget:
 
 ```bash
-autopwn tests/challenges/ret2libc_real_x64 -m claude-sonnet-4-20250514 -n 20
+autopwn tests/challenges/ret2libc_real_x64 -m claude-sonnet-4-6 -n 20
 ```
 
 Use remote target:

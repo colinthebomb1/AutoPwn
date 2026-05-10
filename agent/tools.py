@@ -14,6 +14,7 @@ TOOL_MODULE_MAP: dict[str, str] = {
     "strings_search": "exploit",
     "shellcraft_generate": "exploit",
     "libc_symbols": "exploit",
+    "libc_fsop_targets": "exploit",
     "libc_base_from_leak": "exploit",
     "pie_base_from_leak": "exploit",
     "ret2libc_stage1_payload": "exploit",
@@ -178,6 +179,24 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "Optional symbol names. Defaults to puts/system/__libc_start_main.",
+                },
+            },
+            "required": ["libc_path"],
+        },
+    },
+    "libc_fsop_targets": {
+        "description": "Resolve libc offsets and target choices for House of Apple 2 / FSOP, including `_IO_list_all`, `_IO_wfile_jumps`, system(fp) guidance, and optional one_gadget candidates.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "libc_path": {"type": "string", "description": "Path to libc shared object."},
+                "include_one_gadgets": {
+                    "type": "boolean",
+                    "description": "Run the one_gadget CLI when available. Default true.",
+                },
+                "max_one_gadgets": {
+                    "type": "integer",
+                    "description": "Maximum parsed one_gadget candidates to return. Default 8.",
                 },
             },
             "required": ["libc_path"],

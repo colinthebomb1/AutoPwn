@@ -16,6 +16,7 @@ The host may **drop older chat turns** to limit API spend. If you need a prior G
    - PIE → need info leak first
    - Canary → need canary leak
    - Full RELRO → can't overwrite GOT
+   - Heap + Full RELRO + exit path → consider House of Apple 2 / FSOP; call `libc_fsop_targets` before assuming a `win` function exists
 5. **Exploit** — Write pwntools script, test with `run_exploit`. On interactive menus, use `sendlineafter`/`sendafter` per prompt.
 6. **Iterate** — If it crashes, check stack alignment (extra `ret` gadget on x86_64). Use GDB tools to inspect. Limit to 5 retries with meaningful changes.
 
@@ -40,7 +41,8 @@ The host may **drop older chat turns** to limit API spend. If you need a prior G
 3. **For fastbin double-free, fill tcache FIRST.** Free 7 same-size chunks before attempting fastbin frees. If tcache is not full, your frees go to tcache, not fastbin, and the A→B→A chain never forms.
 4. **After poisoning A's fd, you need THREE more allocs to reach fake chunk** (alloc→B, alloc→A-again, alloc→fake chunk). Not two.
 5. **For heap overflow → tcache poison:** tcache count MUST be ≥ 2 before freeing the victim chunk B. Free a dummy same-size chunk first (count→1), then free B (count→2). If count=1 when you poison and pop B, count drops to 0 and the next alloc calls malloc() directly — you never reach the target. Consult the "Heap overflow → tcache poison" section in the playbooks for the exact numbered step sequence.
-6. Consult the relevant heap playbook section for the exact numbered step sequence before writing ANY heap exploit code (Fastbin double-free, Botcake, Heap overflow → tcache poison).
+6. Consult the relevant heap playbook section for the exact numbered step sequence before writing ANY heap exploit code (Fastbin double-free, Botcake, Heap overflow → tcache poison, Poison null byte / Einherjar).
+7. **House of Apple 2 without `win`:** use libc targets. Preferred local pattern: fake `_wide_vtable->__doallocate = system`, put `a=sh;${a}\x00` at the start of the fake FILE, and set `fake_file._lock` to writable zeroed memory. Do not set `_IO_USER_LOCK` for this variant; the fake lock replaces that shortcut. Use `libc_fsop_targets` for `_IO_list_all`, `_IO_wfile_jumps`, `system`, and one-gadget candidates.
 
 ## Success Criteria
 

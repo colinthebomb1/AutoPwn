@@ -10,8 +10,9 @@ CFLAGS_SHELLCODE  = -fno-stack-protector -no-pie -z execstack -z norelro \
 CFLAGS_FMTREAD    = -fno-stack-protector -no-pie -z norelro -Wno-format-security
 CFLAGS_FMTWRITE   = -fno-stack-protector -no-pie -z norelro -Wno-format-security
 CFLAGS_HEAP       = -fno-stack-protector -no-pie -z relro -Wno-format-security
+CFLAGS_APPLE2     = -fno-stack-protector -no-pie -z relro -z now
 
-BINARIES = ret2win_x64 ret2libc_x64 ret2libc_real_x64 ret2libc_write_x64 ret2libc_pie_real_x64 ret2libc_pie_canary_real_x64 shellcode_x64 format_read_x64 format_write_x64 heap_tcache_poison_x64 heap_fastbin_dup_x64 heap_botcake_x64 heap_overflow_x64
+BINARIES = ret2win_x64 ret2libc_x64 ret2libc_real_x64 ret2libc_write_x64 ret2libc_pie_real_x64 ret2libc_pie_canary_real_x64 shellcode_x64 format_read_x64 format_write_x64 heap_tcache_poison_x64 heap_fastbin_dup_x64 heap_botcake_x64 heap_overflow_x64 heap_poison_null_byte_x64 heap_apple2_x64 heap_apple2_hard_x64
 
 all: $(BINARIES)
 
@@ -53,6 +54,15 @@ heap_botcake_x64: heap_botcake.c
 
 heap_overflow_x64: heap_overflow.c
 	$(CC) $(CFLAGS_HEAP) -o $@ $<
+
+heap_poison_null_byte_x64: heap_poison_null_byte.c
+	$(CC) $(CFLAGS_HEAP) -o $@ $<
+
+heap_apple2_x64: heap_apple2.c
+	$(CC) $(CFLAGS_APPLE2) -o $@ $<
+
+heap_apple2_hard_x64: heap_apple2_hard.c
+	$(CC) $(CFLAGS_APPLE2) -o $@ $<
 
 clean:
 	rm -f $(BINARIES)
